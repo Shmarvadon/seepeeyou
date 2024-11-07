@@ -1,1 +1,37 @@
+C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/core.sv {1 {vlog -work work -vopt -sv -stats=none {C:\Users\harve\OneDrive\Desktop\seepeeyou\verilog\core.sv}
+Questa Intel Starter FPGA Edition-64 vlog 2023.3 Compiler 2023.07 Jul 17 2023
+-- Compiling module instruction_queue
 
+Top level modules:
+	instruction_queue
+
+} {} {}} C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/soc.sv {1 {vlog -work work -vopt -sv -stats=none C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/soc.sv
+Questa Intel Starter FPGA Edition-64 vlog 2023.3 Compiler 2023.07 Jul 17 2023
+
+} {} {}} C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/nocstop.sv {1 {vlog -work work -vopt -sv -stats=none C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/nocstop.sv
+Questa Intel Starter FPGA Edition-64 vlog 2023.3 Compiler 2023.07 Jul 17 2023
+
+} {} {}} C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/alu.sv {1 {vlog -work work -vopt -sv -stats=none C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/alu.sv
+Questa Intel Starter FPGA Edition-64 vlog 2023.3 Compiler 2023.07 Jul 17 2023
+
+} {} {}} C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/testbench.sv {1 {vlog -work work -vopt -sv -stats=none C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/testbench.sv
+Questa Intel Starter FPGA Edition-64 vlog 2023.3 Compiler 2023.07 Jul 17 2023
+-- Compiling module tb
+
+Top level modules:
+	tb
+
+} {} {}} C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/gprs.sv {1 {vlog -work work -vopt -sv -stats=none C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/gprs.sv
+Questa Intel Starter FPGA Edition-64 vlog 2023.3 Compiler 2023.07 Jul 17 2023
+
+} {} {}} C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/clkgen.sv {1 {vlog -work work -vopt -sv -stats=none C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/clkgen.sv
+Questa Intel Starter FPGA Edition-64 vlog 2023.3 Compiler 2023.07 Jul 17 2023
+-- Compiling module clock_generator
+
+Top level modules:
+	clock_generator
+
+} {} {}} C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/lsu.sv {1 {vlog -work work -vopt -sv -stats=none C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/lsu.sv
+Questa Intel Starter FPGA Edition-64 vlog 2023.3 Compiler 2023.07 Jul 17 2023
+
+} {} {}}

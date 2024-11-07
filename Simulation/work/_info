@@ -1,10 +1,254 @@
 m255
 K4
 z2
+Z0 !s12c _opt1
+Z1 !s99 nomlopt
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+R0
+R1
+!s12c _opt
+R1
+!s11f vlog 2023.3 2023.07, Jul 17 2023
 13
 !s112 1.1
 !i10d 8192
 !i10e 25
 !i10f 100
 cModel Technology
-dC:/intelFPGA_lite/23.1std
+Z2 dC:/intelFPGA_lite/23.1std
+T_opt
+!s110 1730905139
+V=ATjFjR:A1hA`Vc1W6VGf2
+Z3 04 2 4 work tb fast 0
+=1-6479f061f99f-672b8433-59-30e4
+R1
+Z4 !s12b OEM100
+!s124 OEM10U1 
+o-quiet -auto_acc_if_foreign -work work
+Z5 tCvgOpt 0
+n@_opt
+Z6 OL;O;2023.3;77
+R2
+T_opt1
+!s110 1730999864
+VBQJDJ0kXKH_h7RLIHYDW`2
+R3
+=1-f46b8c9066d3-672cf637-322-45bc
+R1
+R4
+!s124 OEM10U4 
+o-quiet -auto_acc_if_foreign -work work +acc
+R5
+n@_opt1
+R6
+R2
+vclock_generator
+2C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/clkgen.sv
+Z7 DXx6 sv_std 3 std 0 22 9oUSJO;AeEaW`l:M@^WG92
+Z8 !s110 1731000058
+!i10b 1
+!s100 CQ:[zlO`aHa=lZ>HfbKU32
+I<:RgNzbEI`Y1YmWkDKY<o2
+S1
+Z9 dC:/Users/harve/OneDrive/Desktop/seepeeyou/Simulation
+w1730972491
+8C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/clkgen.sv
+FC:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/clkgen.sv
+!i122 264
+L0 2 56
+Z10 VDg1SIo80bB@j0V0VzS_@n1
+Z11 OL;L;2023.3;77
+r1
+!s85 0
+31
+Z12 !s108 1731000058.000000
+!s107 C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/clkgen.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/clkgen.sv|
+!i113 0
+Z13 o-work work -sv -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
+R5
+vdecoder_input_register
+Z14 2C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/instructiondecoder.sv
+R7
+R8
+!i10b 1
+!s100 l:Ng7`9l[WoYSaF^h[IeR0
+I_M:17K2oLOELEA6gY0mA80
+S1
+R9
+Z15 w1731000051
+Z16 8C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/instructiondecoder.sv
+Z17 FC:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/instructiondecoder.sv
+!i122 262
+L0 53 84
+R10
+R11
+r1
+!s85 0
+31
+R12
+Z18 !s107 C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/instructiondecoder.sv|
+Z19 !s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/instructiondecoder.sv|
+!i113 0
+R13
+R5
+vinstruction_decoder
+R14
+R7
+R8
+!i10b 1
+!s100 SdATIPZQSLSY9RM7Jz<aO1
+I3cRlz:2Aff<H<Hj7VSUR61
+S1
+R9
+R15
+R16
+R17
+!i122 262
+L0 1 50
+R10
+R11
+r1
+!s85 0
+31
+R12
+R18
+R19
+!i113 0
+R13
+R5
+vinstruction_queue
+2C:\Users\harve\OneDrive\Desktop\seepeeyou\verilog\core.sv
+R7
+R8
+!i10b 1
+!s100 b4n7hllb9NWNKW:3YSLce2
+IS8EOG@Cad@PPLih@CUKdA2
+S1
+R9
+w1730997858
+8C:\Users\harve\OneDrive\Desktop\seepeeyou\verilog\core.sv
+FC:\Users\harve\OneDrive\Desktop\seepeeyou\verilog\core.sv
+!i122 261
+L0 1 89
+R10
+R11
+r1
+!s85 0
+31
+R12
+!s107 C:\Users\harve\OneDrive\Desktop\seepeeyou\verilog\core.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|C:\Users\harve\OneDrive\Desktop\seepeeyou\verilog\core.sv|
+!i113 0
+R13
+R5
+vtb
+2C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/testbench.sv
+R7
+R8
+!i10b 1
+!s100 `@_Z`SHc=hhH2lRzbYOej3
+IQl;JmTjNB[6;2;2VzX2??2
+S1
+R9
+w1730999754
+8C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/testbench.sv
+FC:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/testbench.sv
+!i122 263
+L0 5 21
+R10
+R11
+r1
+!s85 0
+31
+R12
+!s107 C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/testbench.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|C:/Users/harve/OneDrive/Desktop/seepeeyou/verilog/testbench.sv|
+!i113 0
+R13
+R5
