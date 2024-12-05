@@ -1,89 +1,105 @@
-module instruction_queue(
-    input           clk,
-    input           rst,
-    
-    input [43:0]    d_in,
-    output [43:0]   d_out,
-    output [7:0]    used_pos,
+`include "structs.sv"
+`include "defines.sv"
 
-    input           we,
-    input           oe
+
+module core(
+    input clk,
+    input fclk,
+    input rst,
+
+    input noc_bus noc_bus_inp,
+    output noc_bus noc_bus_oup
 );
 
-reg [43:0] instructions [7:0];
-reg [7:0] used_positions;
+    /*          NOC stop            */
+    wire ip_port [2] noc_ports;
+    noc_stop #(2, 0) noc_interface(fclk, clk, rst, noc_bus_inp, noc_bus_oup, noc_ports);
 
-assign used_pos = used_positions;
-assign d_out = instructions[0];
+    /*          Instruction fetch, decode & queue logic         */
+    bit [31:0] pc;
+    bit [47:0] curr_inst;
+    bit inst_pres;
+    bit rq_nxt_inst;
+    bit inst_unt_rst;
+    bit mdfy_pc;
+    instruction_decoder #(`INSTRUCTION_QUEUE_LENGTH, `INSTRUCTION_QUEUE_INPUT_WIDTH) inst_fetch(clk, inst_unt_rst, pc, mdfy_pc, curr_inst, inst_pres, rq_nxt_inst, noc_ports[0]);
+
+    /*          General Purpose Registers           */
+    bit [15:0] gpr_we;
+    bit [31:0] gpr_inp [15:0];
+    bit [31:0] gpr_oup [15:0];
+    bit gpr_rst;
+    general_purpose_registers gprs(clk, gpr_rst, gpr_we, gpr_inp, gpr_oup);
+
+    /*          ALU stuff           */
+    bit alu_rst;
+    bit alu_done;
+    bit [7:0] alu_status;
+    arithmetic_and_logic_unit alu(clk, alu_rst, inst_pres, alu_done, curr_inst, gpr_oup, gpr_inp, gpr_we, alu_status);
 
 
-// handle input & output.
-integer i;
-always @(posedge clk) begin
-    
-    case ({oe, we})
+    /*          PFCU stuff          */
+    bit pfcu_rst;
+    bit pfcu_done;
+    program_flow_control_unit pfcu(clk, pfcu_rst, inst_pres, pfcu_done, curr_inst, alu_status, mdfy_pc, pc, noc_ports[1]);
 
-        // Doing nothing.
-        2'b00:
+
+    always @(posedge clk) begin
+        // Check which IP is running.
+        case (curr_inst[2:0])
+        
+        // ALU.
+        3'b100:
+        begin
+            // If the ALU is done then request next instruction.
+            if (alu_done) rq_nxt_inst <= 1;
+            // If not done dont request next instruction.
+            else rq_nxt_inst <= 0;
+        end
+
+        // MEMIO
+        3'b010:
         begin
         end
 
-        // Just writing new value.
-        2'b01:
+        // PFCU
+        3'b110:
         begin
-            if (used_positions < 8) begin
-                // Write the new value & incriment the number of used positions.
-                instructions[used_positions] <= d_in;
-                used_positions <= used_positions + 1;
-            end
+            // If the PFCU is done then request next instruction.
+            if (pfcu_done) rq_nxt_inst <= 1;
+            else rq_nxt_inst <= 0;
         end
 
-        // Just outputting.
-        2'b10:
+        // if no IP is selected, then ask for next instruction.
+        default:
         begin
-            if (used_positions != 0) begin
-                // Shift the values.
-                for (i = 0; i < 8; i = i + 1) begin
-                    instructions[i] <= instructions[i + 1];
-                end
-
-                // Decriment the used_positions variable.
-                used_positions <= used_positions - 1;
-            end
+            rq_nxt_inst <= 1;
         end
-
-        // Outputting & Writing.
-        2'b11:
-        begin
-            // If we have between 1 and 7 values stored.
-            if (used_positions != 0 && used_positions < 8) begin
-                // Shift existing values.  
-                for (i = 0; i < used_positions-1; i = i + 1) begin
-                    instructions[i] <= instructions[i + 1];
-                end
-
-                // Append new value.
-                instructions[used_positions-1] <= d_in;
-            end
-            if (used_positions == 0) begin
-                // Store the value.
-                instructions[used_positions] <= d_in;
-
-                // Incriment used_positions.
-                used_positions <= used_positions + 1;
-            end
-        end
-    endcase
-end
-
-
-// Handle reset.
-always @(posedge rst) begin
-    for (i = 0; i < 8; i = i + 1) begin
-        instructions[i] = 0;
+        endcase
     end
 
-    used_positions = 0;
-end
 
+
+
+    // Handle propogating reset to each IP.
+    always @(posedge rst) begin
+        // Send reset to each IP block.
+        inst_unt_rst <= 1;
+        gpr_rst <= 1;
+        alu_rst <= 1;
+        pfcu_rst <= 1;
+    end
+    always @(negedge rst) begin
+        // Pull reset low for each IP block.
+        inst_unt_rst <= 0;
+        gpr_rst <= 0;
+        alu_rst <= 0;
+        pfcu_rst <= 0;
+    end
+
+    // Hande reset of the core.
+    always @(posedge rst) begin
+        // Reset the program counter.
+        rq_nxt_inst <= 0;
+    end
 endmodule
