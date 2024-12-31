@@ -1,2 +1,9 @@
 `define INSTRUCTION_QUEUE_LENGTH 64
 `define INSTRUCTION_QUEUE_INPUT_WIDTH 16
+
+/*          NOC address defines         */
+`define GPIO_NOC_ADDR 3
+`define GPIO_NOC_PORT 0
+
+`define MEMORY_INTERFACE_NOC_ADDR 2
+`define MEMORY_INTERFACE_NOC_PORT 0

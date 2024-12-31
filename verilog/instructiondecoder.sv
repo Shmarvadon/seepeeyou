@@ -8,13 +8,12 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
     input [31:0] pc,
     input       mdfy_pc,
 
-    output [47:0] inst_oup,
+    output queued_instruction iq_oup,
     output inst_pres,
     input req_nxt_inst,
 
     inout ip_port noc_port
 );
-
     bit rst;
 
     // Instruction decode buffer stuff.
@@ -26,26 +25,20 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
     logic [7:0] db_len;
     // decode buffer base address register.
     reg [31:0] dbba;
-
     decoder_input_register #(INST_QUEUE_LEN, INP_LEN) inst_decode_queue(clk, rst, db_we, db_se, db_sa, db_din, db_dout, db_len);
 
 
     // Instruction queue stuff.
-    reg iq_we;
-    reg iq_se;
-    reg [47:0] iq_inp;
-    wire [47:0] iq_oup;
-    wire [7:0] iq_len;
-
-    assign iq_se = req_nxt_inst;
-
-    instruction_queue inst_queue(clk, rst, iq_inp, iq_oup, iq_len, iq_we, iq_se);
-
-    // assign the output of the instruction queue to output from this module.
-    assign inst_oup = iq_oup;
+    bit iq_we;
+    queued_instruction iq_inp;
+    logic [$clog2(8)+1] iq_len;
     assign inst_pres = iq_len > 0 ? 1 : 0;  // If no more instructions then signal instruction present as 0.
+    fifo_queue #($bits(queued_instruction), 8) inst_q(clk, rst, iq_inp, iq_oup, iq_len, iq_we, req_nxt_inst);
 
-    instruction_fetcher #(INST_QUEUE_LEN) inst_fetcher(clk, rst, db_len, dbba, noc_port, db_din, db_we);
+
+    // Instruction fetcher.
+    instruction_fetcher_2 #(INST_QUEUE_LEN) inst_fetcher(clk, rst, db_len, dbba, noc_port, db_din, db_we);
+
 
     // Handle decoding the instruction.
     always_comb begin
@@ -67,9 +60,11 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
                         // If there are enough bytes to decode the instruction.
                         if (db_len >= 6) begin
                             // Setup the values ready for input.
-                            iq_inp[15:0] <= {db_dout[1], db_dout[0]};
-                            iq_inp[31:16] <= {db_dout[3], db_dout[2]};
-                            iq_inp[47:32] <= {db_dout[5], db_dout[4]};
+                            iq_inp.inst[15:0] <= {db_dout[1], db_dout[0]};
+                            iq_inp.inst[31:16] <= {db_dout[3], db_dout[2]};
+                            iq_inp.inst[47:32] <= {db_dout[5], db_dout[4]};
+                            iq_inp.addr <= dbba;
+                            iq_inp.len <= 6;
                             // Enable input to the queue.
                             iq_we <= 1;
                             // Tell the decode queue to shift out the 2 bytes.
@@ -92,8 +87,10 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
                         // If there are enough bytes to decode.
                         if (db_len >= 2) begin
                             // Setup the values ready for input.
-                            iq_inp[15:0] <= {db_dout[1], db_dout[0]};
-                            iq_inp[47:16] <= 0;
+                            iq_inp.inst[15:0] <= {db_dout[1], db_dout[0]};
+                            iq_inp.inst[47:16] <= 0;
+                            iq_inp.addr <= dbba;
+                            iq_inp.len <= 2;
                             // Enable input to the queue.
                             iq_we <= 1;
                             // Tell the decode queue to shift out the 2 bytes.
@@ -123,9 +120,11 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
                         // If there are enough bytes to decode the instruction.
                         if (db_len >= 6) begin
                             // Setup the values ready for input.
-                            iq_inp[15:0] <= {db_dout[1], db_dout[0]};
-                            iq_inp[31:16] <= {db_dout[3], db_dout[2]};
-                            iq_inp[47:32] <= {db_dout[5], db_dout[4]};
+                            iq_inp.inst[15:0] <= {db_dout[1], db_dout[0]};
+                            iq_inp.inst[31:16] <= {db_dout[3], db_dout[2]};
+                            iq_inp.inst[47:32] <= {db_dout[5], db_dout[4]};
+                            iq_inp.addr <= dbba;
+                            iq_inp.len <= 6;
                             // Enable input to the queue.
                             iq_we <= 1;
                             // Tell the decode queue to shift out the 2 bytes.
@@ -144,13 +143,15 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
                     end
 
                     // If the instruction is 3 bytes.
-                    if (db_dout[0][4:3] == 1) begin
+                    if (db_dout[0][4:3] == 2) begin
                         // If there are enough bytes to decode.
                         if (db_len >= 3) begin
                             // Setup the values ready for input.
-                            iq_inp[15:0] <= {db_dout[1], db_dout[0]};
-                            iq_inp[31:16] <= {0, db_dout[2]};
-                            iq_inp[47:16] <= 0;
+                            iq_inp.inst[15:0] <= {db_dout[1], db_dout[0]};
+                            iq_inp.inst[31:16] <= {0, db_dout[2]};
+                            iq_inp.inst[47:32] <= 0;
+                            iq_inp.addr <= dbba;
+                            iq_inp.len <= 3;
                             // Enable input to the queue.
                             iq_we <= 1;
                             // Tell the decode queue to shift out the 2 bytes.
@@ -169,12 +170,14 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
                     end
 
                     // If the instruction is 2 bytes
-                    if (db_dout[0][4:3] == 2) begin
+                    if (db_dout[0][4:3] == 1) begin
                         // If there are enough bytes to decode.
                         if (db_len >= 2) begin
                             // Setup the values ready for input.
-                            iq_inp[15:0] <= {db_dout[1], db_dout[0]};
-                            iq_inp[47:16] <= 0;
+                            iq_inp.inst[15:0] <= {db_dout[1], db_dout[0]};
+                            iq_inp.inst[47:16] <= 0;
+                            iq_inp.addr <= dbba;
+                            iq_inp.len <= 2;
                             // Enable input to the queue.
                             iq_we <= 1;
                             // Tell the decode queue to shift out the 2 bytes.
@@ -204,9 +207,11 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
                         // If there are enough bytes to decode the instruction.
                         if (db_len >= 5) begin
                             // Setup the values ready for input.
-                            iq_inp[15:0] <= {db_dout[1], db_dout[0]};
-                            iq_inp[31:16] <= {db_dout[3], db_dout[2]};
-                            iq_inp[47:32] <= {0, db_dout[4]};
+                            iq_inp.inst[15:0] <= {db_dout[1], db_dout[0]};
+                            iq_inp.inst[31:16] <= {db_dout[3], db_dout[2]};
+                            iq_inp.inst[47:32] <= {0, db_dout[4]};
+                            iq_inp.addr <= dbba;
+                            iq_inp.len <= 5;
                             // Enable input to the queue.
                             iq_we <= 1;
                             // Tell the decode queue to shift out the 2 bytes.
@@ -229,8 +234,10 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
                         // If there are enough bytes to decode.
                         if (db_len >= 1) begin
                             // Setup the values ready for input.
-                            iq_inp[15:0] <= {0, db_dout[0]};
-                            iq_inp[47:16] <= 0;
+                            iq_inp.inst[15:0] <= {0, db_dout[0]};
+                            iq_inp.inst[47:16] <= 0;
+                            iq_inp.addr <= dbba;
+                            iq_inp.len <= 1;
                             // Enable input to the queue.
                             iq_we <= 1;
                             // Tell the decode queue to shift out the 2 bytes.
@@ -424,7 +431,7 @@ module decoder_input_register #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
     end
 endmodule
 
-
+// Can delete, no longer in use.
 /*          Instruction queue           */
 module instruction_queue(
     input           clk,
@@ -514,6 +521,176 @@ module instruction_queue(
         used_positions = 0;
     end
 endmodule
+
+
+/*          Instruction fetcher         */
+module instruction_fetcher_2 #(parameter DB_SIZE = 64)(
+    input clk,
+    input rst,
+    input [$clog2(DB_SIZE)+1:0] db_len,
+    input [31:0] dbba,
+
+    inout ip_port noc_port,
+
+    output bit [127:0] inst_bytes,
+    output bit db_we
+);
+
+    // Counter to hold the id of tx.
+    bit [7:0] mem_req_id;
+    bit inc_req_id;
+    always @(posedge clk) begin
+        if (inc_req_id) begin
+            if (mem_req_id < 255) mem_req_id <= mem_req_id + 1;
+            else mem_req_id <= 0;
+        end
+    end
+
+    // fifo queue to log sent requests in.
+    packet sr_inp;
+    packet sr_oup;
+    bit [$clog2(8)+1] sr_len;
+    bit sr_we;
+    bit sr_se;
+    fifo_queue #($bits(packet), 8) sent_reqs(clk, rst, sr_inp, sr_oup, sr_len, sr_we, sr_se);
+
+    // single input parallel output buffer to hold rx.
+    bit rxb_we;     // rx buffer write enable.
+    packet rxb_oup [7:0];
+    bit [7:0] rxb_cl;   // rx buffer clear line.
+    bit [7:0] rxb_ol;   // rx buffer occupied lines.
+    sipo_buffer #($bits(packet), 8) rx_buff(clk, rst, rxb_we, noc_port.dat_from_noc, rxb_cl, rxb_oup, rxb_ol);
+
+    // noc port control stuff.
+    bit tx_submit;
+    bit rx_complete;
+    assign noc_port.dat_to_noc = sr_inp;
+    assign noc_port.tx_submit = tx_submit;
+    assign noc_port.rx_complete = rx_complete;
+
+    // Handle sending requests to read instruction bytes.
+    always_comb begin
+        // If decode buffer length is 16 or more bytes less than maximum, there is room in the reqs sent q and the port is open.
+        if (DB_SIZE - (db_len + (16 * sr_len)) >= 16 && sr_len <8 && noc_port.to_noc_prt_stat == port_open) begin
+            // Have a request ready to go constantly.
+            sr_inp.dst_addr <= 2;
+            sr_inp.dst_prt <= 0;
+            sr_inp.id <= mem_req_id; // Temporary thing, should make a graycode counter to allow assignment of packet ids.
+            sr_inp.pt <= memory_read_request;
+            sr_inp.dat <= dbba + db_len + (16 * sr_len);
+            sr_inp.src_addr <= noc_port.port_address;
+            sr_inp.src_prt <= noc_port.port_number;
+
+            // Hook up the acceptance of the tx into noc stop trigger shifting of request into sent reqs queue.
+            // This means that only once the noc stop signals it accepts the tx does it get shifted into our local memory.
+            sr_we <= noc_port.tx_complete;
+
+            // Signal that we want to send a tx.
+            tx_submit <= 1;
+
+            // Signal that we want to incriment the id.
+            inc_req_id <= 1;
+        end
+        // If conditions to request more instruction bytes are not true.
+        else begin
+            // Signal that we dont want to submit a tx.
+            tx_submit <= 0;
+
+            sr_we <= 0;
+
+            // Signal that we dont want to incriment the id.
+            inc_req_id <= 0;
+        end
+    end
+
+    // Handle recieveing rx requests from noc
+    always_comb begin
+        // If the noc port is sending is an rx.
+        if (noc_port.rx_recieve) begin
+            // If the buffer is full.
+            if (rxb_ol == 8'b11111111) begin
+                // Signal to the recieve buffer that we have nothing to write.
+                rxb_we <= 0;
+
+                // Signal to the NOC that we have not read its rx.
+                rx_complete <= 0;
+            end
+            // If the recieve buffer is not full.
+            else begin
+                // Signal to recieve buffer that we want to write to it.
+                rxb_we <= 1;
+
+                // Signal to the NOC that we have recieved its rx.
+                rx_complete <= 1;
+            end
+        end
+        // If the NOC port is not sending an rx.
+        else begin
+
+            // Signal nothing to write to rx buff.
+            rxb_we <= 0;
+
+            // Signal to NOC that nothing recieved.
+            rx_complete <= 0;
+        end
+    end
+
+    // Handle appending the correct reply from noc to the decode buffer.
+    bit [3:0] selected_rx;
+    integer i;
+    always_comb begin
+        // If the rx buffer isnt empty.
+        if (rxb_ol != 0) begin
+            // Loop over the rx packets.
+            for (i = 0; i < 8; i = i + 1) begin
+                // If the packets id matches the earliest sent mem request (the one that is properly aligned with decode buffer).
+                if (rxb_oup[i].id == sr_oup.id) begin
+                    // Select the rx as being the valid one to append to decode buffer.
+                    selected_rx <= i;
+                end
+            end
+
+            // If the selected rx is actually present.
+            if (rxb_ol[selected_rx]) begin
+                // Signal instruction bytes ready.
+                db_we <= 1;
+
+                // Present the bytes.
+                inst_bytes <= rxb_oup[selected_rx].dat;
+
+                // Signal to clear this line in the rx buffer.
+                rxb_cl[selected_rx] <= 1;
+
+                // signal the sent request queue to shift one.
+                sr_se <= 1;
+            end
+            // If the selected line is not carrying a valid instruction.
+            else begin
+                // Signal that we have nothing to write to decode buffer.
+                db_we <= 0;
+
+                // Signal that we have nothing to clear from the rx buffer.
+                rxb_cl[selected_rx] <= 0;
+
+                // Signal the sent requests queue to not shift
+                sr_se <= 0;
+            end
+        end
+        // If the rxb is empty.
+        else begin
+            // Signal that we have no instruction bytes to return.
+            db_we <= 0;
+
+            // Signal that we also have nothing to clear from rx buffer as its empty.
+            rxb_cl <= 0;
+
+            // Signal the sent requests queue to not shift.
+            sr_se <= 0;
+        end
+    end
+
+endmodule
+
 
 /*          Instruction fetcher         */
 module instruction_fetcher #(parameter DB_LEN = 64)(

@@ -7,6 +7,154 @@
 
 module tb;
 reg clk;
+reg rst;
+
+// Alternate a global cock at 
+always begin
+    #10 clk=~clk;
+end
+always @(posedge clk) $display("clock!");
+
+initial begin
+    clk = 0;
+    rst <= 1;
+    #5 rst <= 0;
+end
+
+// Emulate 64KB of memory.
+bit [0:7] memory [65535:0];// = {8'b10000100, 8'b00100010};
+
+integer i;
+
+initial begin
+    // Setup instructions in memory.
+
+    // ADD R2, R2
+    memory[0] = 8'b10000100;
+    memory[1] = 8'b00100010;
+
+    // ADD 24, R2
+    memory[2] = 8'b10001100;
+    memory[3] = 8'b00000010;
+    memory[4] = 0;
+    memory[5] = 0;
+    memory[6] = 0;
+    memory[7] = 24;
+
+    //RLS R2, R3
+    memory[8] = 8'b01010100;
+    memory[9] = 8'b00110010;
+    
+    //MUL 10, R3
+    memory[10] = 8'b11101100;
+    memory[11] = 8'b00000011;
+    memory[12] = 0;
+    memory[13] = 0;
+    memory[14] = 0;
+    memory[15] = 10;
+
+    // GOT 64
+    memory[16] = 8'b01001110;
+    memory[17] = 64;
+    memory[18] = 0;
+    memory[19] = 0;
+    memory[20] = 0;
+
+    // LOD 0, R1
+    memory[21] = 8'b00000010;
+    memory[22] = 8'b00000001;
+    memory[23] = 0;
+    memory[24] = 0;
+    memory[25] = 0;
+    memory[26] = 0;
+
+    // STR 128, R1
+    memory[27] = 8'b10000010;
+    memory[28] = 8'b00000001;
+    memory[29] = 128;
+    memory[30] = 0;
+    memory[31] = 0;
+    memory[32] = 0;
+
+    //JMP 0
+    memory[33] = 8'b00001110;
+    memory[34] = 0;
+    memory[35] = 0;
+    memory[36] = 0;
+    memory[37] = 0;
+
+    // RET
+    memory[64] = 8'b11000110;
+end
+
+
+logic [31:0] mem_addr_sel;
+wire logic [127:0] mem_dat;
+bit [127:0] mem_dat_driver;
+logic mem_we;
+logic mem_re;
+logic mem_en;
+logic mclk;
+soc sooc(rst, mem_addr_sel, mem_dat, mem_en, mem_we, mem_re, mclk);
+
+
+// Handle the memory stuffs.
+assign mem_dat = (mem_re) ? mem_dat_driver : 'hz;
+always @(posedge mclk) begin
+    // If the memory is enabled.
+    if (mem_en) begin
+
+        // memory write.
+        if (mem_we) begin
+            memory[mem_addr_sel[31:0]]          <= mem_dat[7:0];
+            memory[mem_addr_sel[31:0] + 1]      <= mem_dat[15:8];
+            memory[mem_addr_sel[31:0] + 2]      <= mem_dat[23:16];
+            memory[mem_addr_sel[31:0] + 3]      <= mem_dat[31:24];
+            memory[mem_addr_sel[31:0] + 4]      <= mem_dat[39:32];
+            memory[mem_addr_sel[31:0] + 5]      <= mem_dat[47:40];
+            memory[mem_addr_sel[31:0] + 6]      <= mem_dat[55:48];
+            memory[mem_addr_sel[31:0] + 7]      <= mem_dat[63:56];
+
+            memory[mem_addr_sel[31:0] + 8]      <= mem_dat[71:64];
+            memory[mem_addr_sel[31:0] + 9]      <= mem_dat[79:72];
+            memory[mem_addr_sel[31:0] + 10]     <= mem_dat[87:80];
+            memory[mem_addr_sel[31:0] + 11]     <= mem_dat[95:88];
+            memory[mem_addr_sel[31:0] + 12]     <= mem_dat[103:96];
+            memory[mem_addr_sel[31:0] + 13]     <= mem_dat[111:104];
+            memory[mem_addr_sel[31:0] + 14]     <= mem_dat[119:112];
+            memory[mem_addr_sel[31:0] + 15]     <= mem_dat[127:120];
+
+        end
+
+        // memory read.
+        if (mem_re) begin
+            mem_dat_driver[7:0]      <=  memory[mem_addr_sel[31:0]];
+            mem_dat_driver[15:8]     <=  memory[mem_addr_sel[31:0] + 1];
+            mem_dat_driver[23:16]    <=  memory[mem_addr_sel[31:0] + 2];
+            mem_dat_driver[31:24]    <=  memory[mem_addr_sel[31:0] + 3];
+            mem_dat_driver[39:32]    <=  memory[mem_addr_sel[31:0] + 4];
+            mem_dat_driver[47:40]    <=  memory[mem_addr_sel[31:0] + 5];
+            mem_dat_driver[55:48]    <=  memory[mem_addr_sel[31:0] + 6];
+            mem_dat_driver[63:56]    <=  memory[mem_addr_sel[31:0] + 7];
+
+            mem_dat_driver[71:64]    <=  memory[mem_addr_sel[31:0] + 8];
+            mem_dat_driver[79:72]    <=  memory[mem_addr_sel[31:0] + 9];
+            mem_dat_driver[87:80]    <=  memory[mem_addr_sel[31:0] + 10];
+            mem_dat_driver[95:88]    <=  memory[mem_addr_sel[31:0] + 11];
+            mem_dat_driver[103:96]   <=  memory[mem_addr_sel[31:0] + 12];
+            mem_dat_driver[111:104]  <=  memory[mem_addr_sel[31:0] + 13];
+            mem_dat_driver[119:112]  <=  memory[mem_addr_sel[31:0] + 14];
+            mem_dat_driver[127:120]  <=  memory[mem_addr_sel[31:0] + 15];
+        end
+    end
+end
+
+endmodule
+
+/*
+
+module tb;
+reg clk;
 reg clk_2;
 reg rst;
 reg en;
@@ -63,12 +211,39 @@ initial begin
     memory[14] = 0;
     memory[15] = 10;
 
-    //JMP 0
-    memory[16] = 8'b00001110;
-    memory[17] = 0;
+    // GOT 64
+    memory[16] = 8'b01001110;
+    memory[17] = 64;
     memory[18] = 0;
     memory[19] = 0;
     memory[20] = 0;
+
+    // LOD 0, R1
+    memory[21] = 8'b00000010;
+    memory[22] = 8'b00000001;
+    memory[23] = 0;
+    memory[24] = 0;
+    memory[25] = 0;
+    memory[26] = 0;
+
+    // STR 128, R1
+    memory[27] = 8'b10000010;
+    memory[28] = 8'b00000001;
+    memory[29] = 128;
+    memory[30] = 0;
+    memory[31] = 0;
+    memory[32] = 0;
+
+    //JMP 0
+    memory[33] = 8'b00001110;
+    memory[34] = 0;
+    memory[35] = 0;
+    memory[36] = 0;
+    memory[37] = 0;
+
+    // RET
+    memory[64] = 8'b11000110;
+
 end
 
 wire noc_bus into_core;
@@ -92,39 +267,67 @@ assign mem_noc_prt.rx_complete = rx_complete;
 always @(posedge clk_2) begin
     // If there is a memory access request.
     if (mem_noc_prt.rx_recieve) begin
-        // Fill the reply.
-        reply_pckt.pt = memory_read_reply;
-        reply_pckt.id = mem_noc_prt.dat_from_noc.id;
+        // if a memory read request.
+        if (mem_noc_prt.dat_from_noc.pt == memory_read_request) begin
+            // Fill the reply.
+            reply_pckt.pt = memory_read_reply;
+            reply_pckt.id = mem_noc_prt.dat_from_noc.id;
 
-        reply_pckt.dat[7:0]      <=  memory[mem_noc_prt.dat_from_noc.dat[31:0]];
-        reply_pckt.dat[15:8]     <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 1];
-        reply_pckt.dat[23:16]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 2];
-        reply_pckt.dat[31:24]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 3];
-        reply_pckt.dat[39:32]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 4];
-        reply_pckt.dat[47:40]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 5];
-        reply_pckt.dat[55:48]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 6];
-        reply_pckt.dat[63:56]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 7];
+            reply_pckt.dat[7:0]      <=  memory[mem_noc_prt.dat_from_noc.dat[31:0]];
+            reply_pckt.dat[15:8]     <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 1];
+            reply_pckt.dat[23:16]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 2];
+            reply_pckt.dat[31:24]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 3];
+            reply_pckt.dat[39:32]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 4];
+            reply_pckt.dat[47:40]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 5];
+            reply_pckt.dat[55:48]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 6];
+            reply_pckt.dat[63:56]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 7];
 
-        reply_pckt.dat[71:64]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 8];
-        reply_pckt.dat[79:72]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 9];
-        reply_pckt.dat[87:80]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 10];
-        reply_pckt.dat[95:88]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 11];
-        reply_pckt.dat[103:96]   <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 12];
-        reply_pckt.dat[111:104]  <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 13];
-        reply_pckt.dat[119:112]  <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 14];
-        reply_pckt.dat[127:120]  <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 15];
+            reply_pckt.dat[71:64]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 8];
+            reply_pckt.dat[79:72]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 9];
+            reply_pckt.dat[87:80]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 10];
+            reply_pckt.dat[95:88]    <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 11];
+            reply_pckt.dat[103:96]   <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 12];
+            reply_pckt.dat[111:104]  <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 13];
+            reply_pckt.dat[119:112]  <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 14];
+            reply_pckt.dat[127:120]  <=  memory[mem_noc_prt.dat_from_noc.dat[31:0] + 15];
 
-        reply_pckt.dst_addr <= mem_noc_prt.dat_from_noc.src_addr;
-        reply_pckt.dst_prt <= mem_noc_prt.dat_from_noc.src_prt;
+            reply_pckt.dst_addr <= mem_noc_prt.dat_from_noc.src_addr;
+            reply_pckt.dst_prt <= mem_noc_prt.dat_from_noc.src_prt;
 
-        reply_pckt.src_addr <= 2;
-        reply_pckt.src_prt <= 0;
+            reply_pckt.src_addr <= 2;
+            reply_pckt.src_prt <= 0;
 
-        // submit the reply.
-        submit_tx <= 1;
+            // submit the reply.
+            submit_tx <= 1;
 
-        // Indicate that the rx is complete
-        rx_complete <= 1;
+            // Indicate that the rx is complete
+            rx_complete <= 1;
+        end
+
+        // If a memory write request.
+        if (mem_noc_prt.dat_from_noc.pt == memory_write_request) begin
+            // Write to memory.
+            memory[mem_noc_prt.dat_from_noc.dat[31:0]] = mem_noc_prt.dat_from_noc.dat[39:32]; 
+            memory[mem_noc_prt.dat_from_noc.dat[31:0]+1] = mem_noc_prt.dat_from_noc.dat[47:40]; 
+            memory[mem_noc_prt.dat_from_noc.dat[31:0]+2] = mem_noc_prt.dat_from_noc.dat[55:48]; 
+            memory[mem_noc_prt.dat_from_noc.dat[31:0]+3] = mem_noc_prt.dat_from_noc.dat[63:56]; 
+
+            // create reply.
+            reply_pckt.pt = memory_write_reply;
+            reply_pckt.id = mem_noc_prt.dat_from_noc.id;
+
+            reply_pckt.dst_addr <= mem_noc_prt.dat_from_noc.src_addr;
+            reply_pckt.dst_prt <= mem_noc_prt.dat_from_noc.src_prt;
+
+            reply_pckt.src_addr <= 2;
+            reply_pckt.src_prt <= 0;
+
+            // Submit the reply.
+            submit_tx <= 1;
+
+            // indicate that rx is complete.
+            rx_complete <= 1;
+        end
     end
     // If the reply is complete.
     if (mem_noc_prt.tx_complete) begin
@@ -136,9 +339,10 @@ always @(posedge clk_2) begin
     end
 end
 
+
 endmodule
 
-
+*/
 
 
 /*
