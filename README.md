@@ -4,8 +4,3 @@ This project is basically me trying to piece together the design of modern micro
 
 ## Very cool people who helped me
 Would like to thank the following people for either helping me directly or giving me some great advice when it comes to chip design and the processes around it:
-
-- Carson    @ Ampere computing
-- Tovine    @ Nordic Semi
-- Shreesh   @ Intel
-- Matt      @ Imagination Technologies
