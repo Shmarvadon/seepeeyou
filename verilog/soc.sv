@@ -24,9 +24,15 @@ bit fclk;
 // Do the cocks.
 always begin
     #10 cclk =~cclk;
-    #10 fclk =~fclk;
-    #10 mclk =~mclk;
 end
+always begin
+    #20 fclk =~fclk;
+end
+always begin
+    #60 mclk =~mclk;
+end
+
+always @(posedge cclk) $display("clock! %t", $time);
 
 wire noc_bus core_to_mem;
 wire noc_bus mem_to_core;

@@ -10,10 +10,10 @@ reg clk;
 reg rst;
 
 // Alternate a global cock at 
-always begin
-    #10 clk=~clk;
-end
-always @(posedge clk) $display("clock!");
+//always begin
+    //#10 clk=~clk;
+//end
+//always @(posedge clk) $display("clock!");
 
 initial begin
     clk = 0;
@@ -22,7 +22,7 @@ initial begin
 end
 
 // Emulate 64KB of memory.
-bit [0:7] memory [65535:0];// = {8'b10000100, 8'b00100010};
+bit [0:7] memory [65535:0];
 
 integer i;
 
@@ -136,6 +136,8 @@ always @(posedge mclk) begin
             mem_dat_driver[47:40]    <=  memory[mem_addr_sel[31:0] + 5];
             mem_dat_driver[55:48]    <=  memory[mem_addr_sel[31:0] + 6];
             mem_dat_driver[63:56]    <=  memory[mem_addr_sel[31:0] + 7];
+
+            $display("Memory read request. %b %t", mem_addr_sel, $time);
 
             mem_dat_driver[71:64]    <=  memory[mem_addr_sel[31:0] + 8];
             mem_dat_driver[79:72]    <=  memory[mem_addr_sel[31:0] + 9];

@@ -156,6 +156,8 @@ always @(posedge mclk) begin
                         // Present the memory address.
                         mem_addr_sel <= noc_port.dat_from_noc.dat[31:0];
 
+                        $display("Memory being read from at: %b", noc_port.dat_from_noc.dat[31:0]);
+
                         // Enable the memory and set it to read.
                         mem_en <= 1;
                         mem_re <= 1;
@@ -198,6 +200,10 @@ always @(posedge mclk) begin
                     // Wait for the tx to be accepted by NOC stop.
                     3:
                     begin
+
+                        // Disable the memory.
+                        mem_en <= 0;
+
                         // If the noc stop has accepted the tx.
                         if (noc_port.tx_complete) begin
                             // stop submitting the tx.
@@ -207,8 +213,13 @@ always @(posedge mclk) begin
                             rx_complete <= 1;
 
                             // reset stage to 0.
-                            stage = 0;
+                            stage += 1;
                         end
+                    end
+
+                    4:
+                    begin
+                        stage = 0;
                     end
                 endcase
             end
@@ -217,6 +228,7 @@ always @(posedge mclk) begin
             begin
                 submit_tx <= 0;
                 rx_complete <= 0;
+                stage <= 0;
             end
         endcase
     end

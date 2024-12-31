@@ -537,12 +537,12 @@ module instruction_fetcher_2 #(parameter DB_SIZE = 64)(
 );
 
     // Counter to hold the id of tx.
-    bit [7:0] mem_req_id;
+    bit [7:0] mem_req_id = 1;
     bit inc_req_id;
     always @(posedge clk) begin
         if (inc_req_id) begin
             if (mem_req_id < 255) mem_req_id <= mem_req_id + 1;
-            else mem_req_id <= 0;
+            else mem_req_id <= 1;
         end
     end
 
@@ -622,6 +622,8 @@ module instruction_fetcher_2 #(parameter DB_SIZE = 64)(
 
                 // Signal to the NOC that we have recieved its rx.
                 rx_complete <= 1;
+
+                $display("Recieved instruction bytes from NOC. %t", $time);
             end
         end
         // If the NOC port is not sending an rx.
@@ -641,12 +643,13 @@ module instruction_fetcher_2 #(parameter DB_SIZE = 64)(
     always_comb begin
         // If the rx buffer isnt empty.
         if (rxb_ol != 0) begin
+
             // Loop over the rx packets.
             for (i = 0; i < 8; i = i + 1) begin
                 // If the packets id matches the earliest sent mem request (the one that is properly aligned with decode buffer).
                 if (rxb_oup[i].id == sr_oup.id) begin
                     // Select the rx as being the valid one to append to decode buffer.
-                    selected_rx <= i;
+                    selected_rx = i;
                 end
             end
 
@@ -666,6 +669,9 @@ module instruction_fetcher_2 #(parameter DB_SIZE = 64)(
             end
             // If the selected line is not carrying a valid instruction.
             else begin
+
+                $display("nothing present.");
+
                 // Signal that we have nothing to write to decode buffer.
                 db_we <= 0;
 
