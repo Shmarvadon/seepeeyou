@@ -5,6 +5,99 @@
 `include "defines.sv"
 `include "nocstop.sv"
 
+
+
+module tb;
+
+bit clk;
+bit rst;
+bit re;
+bit we;
+bit [31:0] addr;
+bit [127:0] dat_inp;
+bit [15:0] bo_inp;
+logic [127:0] dat_oup;
+logic [15:0] bo_oup;
+logic line_present;
+logic done;
+
+logic [31:0] bs_addr;
+logic [127:0] bs_doup;
+logic [15:0] bs_booup;
+logic bs_we;
+bit bs_done;
+
+
+integer i;
+initial begin
+    clk = 0;
+    bs_done = 1;
+
+    // Write to the cache.
+    addr = 128;
+    addr[12] = 1;
+
+    re = 0;
+    we = 1;
+
+    dat_inp = 128;
+    bo_inp[0] = 1;
+
+    #20
+    
+    // read that cache line back.
+    re = 1;
+    we = 0;
+
+    #20
+
+    // Lets attempt to read a line that we dont have.
+    addr = 420;
+
+    // Now lets attempt to write a bunch of stuff to a set to force it to evict a line.
+    for (i = 0; i < 40; i = i + 1) begin
+
+        #20
+        // incriment the tag.
+        addr = 32'h00010110 + (i * 32'h00100000);       // *** Note to self make sure addr is 128b aligned or issues ensue. ***
+        dat_inp = i * 2;
+        bo_inp = 3;
+
+        re = 0;
+        we = 1;
+    end
+
+    #20
+
+    // Lets try to upate an older cache line.
+    addr = 128;
+    addr[12] = 1;
+
+    we = 1;
+    re = 0;
+    dat_inp = 512;
+    bo_inp = 3;
+
+    #20
+
+    // Now lets read out the line we just modified.
+
+    we = 0;
+    re = 1;
+end
+
+always begin
+    #10 clk =~clk;
+    $display("Clock!");
+end
+
+cache #(32, 128) caching(clk, rst, addr, re, we, dat_oup, bo_oup, dat_inp, bo_inp, line_present, done, bs_addr, bs_doup, bs_booup, bs_done, bs_we);
+
+
+endmodule
+
+
+/*
 module tb;
 reg clk;
 reg rst;
@@ -115,6 +208,8 @@ always @(posedge mclk) begin
             memory[mem_addr_sel[31:0] + 6]      <= mem_dat[55:48];
             memory[mem_addr_sel[31:0] + 7]      <= mem_dat[63:56];
 
+            $display("Memory write request. %b %t", mem_addr_sel, $time);
+
             memory[mem_addr_sel[31:0] + 8]      <= mem_dat[71:64];
             memory[mem_addr_sel[31:0] + 9]      <= mem_dat[79:72];
             memory[mem_addr_sel[31:0] + 10]     <= mem_dat[87:80];
@@ -152,6 +247,7 @@ always @(posedge mclk) begin
 end
 
 endmodule
+*/
 
 /*
 

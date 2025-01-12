@@ -130,6 +130,8 @@ always @(posedge mclk) begin
                     // Finish the write request.
                     6:
                     begin
+
+                        mem_en <= 0;
                         // If the NOC port accepts our tx.
                         if (noc_port.tx_complete) begin
 
@@ -140,8 +142,13 @@ always @(posedge mclk) begin
                             rx_complete <= 1;
 
                             // Go back to stage 0.
-                            stage = 0;
+                            stage += 1;
                         end
+                    end
+
+                    7:
+                    begin
+                        stage = 0;
                     end
                 endcase
             end
@@ -229,6 +236,10 @@ always @(posedge mclk) begin
                 submit_tx <= 0;
                 rx_complete <= 0;
                 stage <= 0;
+
+                mem_en <= 0;
+                mem_re <= 0;
+                mem_we <= 0;
             end
         endcase
     end

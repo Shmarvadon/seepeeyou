@@ -431,97 +431,6 @@ module decoder_input_register #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
     end
 endmodule
 
-// Can delete, no longer in use.
-/*          Instruction queue           */
-module instruction_queue(
-    input           clk,
-    input           rst,
-    
-    input [47:0]    d_in,
-    output [47:0]   d_out,
-    output [7:0]    used_pos,
-
-    input           we,
-    input           oe
-);
-
-    reg [47:0] instructions [7:0];
-    reg [7:0] used_positions;
-
-    assign used_pos = used_positions;
-    assign d_out = instructions[0];
-
-
-    // handle input & output.
-    integer i;
-    always @(posedge clk) begin
-        
-        case ({oe, we})
-
-            // Doing nothing.
-            2'b00:
-            begin
-            end
-
-            // Just writing new value.
-            2'b01:
-            begin
-                if (used_positions < 8) begin
-                    // Write the new value & incriment the number of used positions.
-                    instructions[used_positions] <= d_in;
-                    used_positions <= used_positions + 1;
-                end
-            end
-
-            // Just outputting.
-            2'b10:
-            begin
-                if (used_positions != 0) begin
-                    // Shift the values.
-                    for (i = 0; i < 8; i = i + 1) begin
-                        instructions[i] <= instructions[i + 1];
-                    end
-
-                    // Decriment the used_positions variable.
-                    used_positions <= used_positions - 1;
-                end
-            end
-
-            // Outputting & Writing.
-            2'b11:
-            begin
-                // If we have between 1 and 7 values stored.
-                if (used_positions != 0 && used_positions < 8) begin
-                    // Shift existing values.  
-                    for (i = 0; i < used_positions-1; i = i + 1) begin
-                        instructions[i] <= instructions[i + 1];
-                    end
-
-                    // Append new value.
-                    instructions[used_positions-1] <= d_in;
-                end
-                if (used_positions == 0) begin
-                    // Store the value.
-                    instructions[used_positions] <= d_in;
-
-                    // Incriment used_positions.
-                    used_positions <= used_positions + 1;
-                end
-            end
-        endcase
-    end
-
-
-    // Handle reset.
-    always @(posedge rst) begin
-        for (i = 0; i < 8; i = i + 1) begin
-            instructions[i] = 0;
-        end
-
-        used_positions = 0;
-    end
-endmodule
-
 
 /*          Instruction fetcher         */
 module instruction_fetcher_2 #(parameter DB_SIZE = 64)(
@@ -603,17 +512,18 @@ module instruction_fetcher_2 #(parameter DB_SIZE = 64)(
         end
     end
 
-    // Handle recieveing rx requests from noc
+    // Handle recieveing rx requests from noc.
     always_comb begin
         // If the noc port is sending is an rx.
         if (noc_port.rx_recieve) begin
-            // If the buffer is full.
-            if (rxb_ol == 8'b11111111) begin
+            // If the buffer is full or the id does not match the one we want we skip it.
+            if (rxb_ol == 8'b11111111 || noc_port.dat_from_noc.id != sr_oup.id) begin
                 // Signal to the recieve buffer that we have nothing to write.
                 rxb_we <= 0;
 
                 // Signal to the NOC that we have not read its rx.
-                rx_complete <= 0;
+                // Signal that we have read it (Havent really, just want to skip it).
+                rx_complete <= 1;
             end
             // If the recieve buffer is not full.
             else begin
@@ -693,157 +603,6 @@ module instruction_fetcher_2 #(parameter DB_SIZE = 64)(
             // Signal the sent requests queue to not shift.
             sr_se <= 0;
         end
-    end
-
-endmodule
-
-
-/*          Instruction fetcher         */
-module instruction_fetcher #(parameter DB_LEN = 64)(
-    input clk,
-    input rst,
-    input [7:0] db_len,
-    input [31:0] dbba,
-
-    inout ip_port noc_port,
-
-    output [127:0] inst_bytes_oup,
-    output logic inst_bytes_ready
-);
-    // The job of this module is to create transactions to submit to the NOC to request instruction bytes.
-
-    logic [127:0] inst_bytes;
-    assign inst_bytes_oup = inst_bytes;
-
-    // states for this thing.
-    typedef enum bit[1:0] {free, waiting_for_reply} current_state;
-    current_state status;
-
-    // noc port connections.
-    logic submit_tx;
-    assign noc_port.tx_submit = submit_tx;
-
-    packet dat_packet;
-    assign noc_port.dat_to_noc = dat_packet;
-
-    logic rx_complete;
-    assign noc_port.rx_complete = rx_complete;
-
-    // Keep track of ids.
-    bit [7:0] pkt_id;
-
-
-    always_comb begin
-        case (status) 
-        // Case where we are free to make a request to the NOC.
-        free:
-        begin
-
-            // Signal that we are not ready to recieve anything yet.
-            rx_complete <= 0;
-
-            // Check if we need to make a request.
-            if (db_len < DB_LEN - 16) begin
-                // Check if we are able to make a request.
-                if (noc_port.to_noc_prt_stat == port_open) begin
-                    // Make request for more instruction bytes.
-                    dat_packet.pt <= memory_read_request;
-                    dat_packet.id <= pkt_id;
-                    dat_packet.dat <= dbba + db_len;
-                    dat_packet.src_prt <= 0;
-                    dat_packet.src_addr <= 0;
-                    dat_packet.dst_prt <= 0;
-                    dat_packet.dst_addr <= 2;
-
-                    // Signal that we are going to make the request to the NOC.
-                    submit_tx <= 1;
-                end
-                // If we can not make a request.
-                else begin
-                    // Signal that we are not making a request to the NOC.
-                    submit_tx <= 0;
-                end
-            end
-            // If we dont need to make a request.
-            else begin
-                // Signal that there is no tx to submit.
-                submit_tx <= 0;
-            end
-
-            // Signal that no instruction bytes are ready.
-            inst_bytes_ready <= 0;
-        end
-
-        // Case where a request has already been made and we are waiting for a reply.
-        waiting_for_reply:
-        begin
-            // If there is a reply waiting for us.
-            if (noc_port.from_noc_prt_stat == port_open && noc_port.rx_recieve) begin
-
-                // Check if its the packet we want.
-                if (noc_port.dat_from_noc.id == pkt_id) begin
-                    // Signal that there are instruction bytes waiting for the decode buffer.
-                    inst_bytes_ready <= 1;
-
-                    // Unpack the transmission.
-                    inst_bytes <= noc_port.dat_from_noc.dat;
-                end
-
-                // Signal to the noc that we have recieved the rx.
-                rx_complete <= 1;
-            end
-            // If there is no reply waiting for us.
-            else begin
-                // Signal that there are no instruction bytes ready yet.
-                inst_bytes_ready <= 0;
-
-                // Signal that rx is not complete.
-                rx_complete <= 0;
-            end
-            
-            // Signal that we no longer intend to submit a tx to noc.
-            submit_tx <= 0;
-        end
-        endcase
-    end
-
-    // Handle state transitions.
-    always @(posedge clk) begin
-        case (status) 
-        // If status is free.
-        free:
-        begin
-            // If more bytes are needed and a request can be made.
-            if (db_len < DB_LEN - 16  && noc_port.to_noc_prt_stat == port_open && noc_port.tx_complete) begin
-                // Change status to waiting for reply. This stops the always_comb block above from doing stuff.
-                status <= waiting_for_reply;
-            end
-        end
-
-        // If status is waiting_for_reply.
-        waiting_for_reply:
-        begin
-            // We wait for the NOC to signal that a reply is ready.
-            if (noc_port.from_noc_prt_stat == port_open && noc_port.rx_recieve) begin
-                // If we have recieved the packet we want.
-                if (noc_port.dat_from_noc.id == pkt_id) begin
-                    status <= free;
-
-                    // Incriment pkt_id.
-                    if (pkt_id <= 128) pkt_id <= pkt_id + 1;
-                    else pkt_id <= 0;
-                end
-                // If not then we just keep waiting.
-            end
-        end
-        endcase
-    end
-
-    // Handle reset.
-    always @(posedge rst) begin
-        // Set status to free.
-        status <= free;
-        pkt_id <= 0;
     end
 
 endmodule

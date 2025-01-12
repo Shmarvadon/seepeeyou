@@ -169,15 +169,15 @@ module register #(parameter WIDTH, RESET_VAL = 'hFFFFFFFF)(
     input we
 );
 
-always @(posedge clk) begin
-    // if write enable.
-    if (we) oup <= inp;
-end
+    always @(posedge clk) begin
+        // if write enable.
+        if (we) oup <= inp;
+    end
 
-// handle reset.
-always @(posedge rst) begin
-    oup <= RESET_VAL;
-end
+    // handle reset.
+    always @(posedge rst) begin
+        oup <= RESET_VAL;
+    end
 endmodule
 
 
