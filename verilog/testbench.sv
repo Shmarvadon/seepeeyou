@@ -5,96 +5,285 @@
 `include "defines.sv"
 `include "nocstop.sv"
 
+/*
+module tb;
+
+bit clk;
+bit rst;
+bit [31:0] addr;
+bit [127:0] dat_inp;
+logic [127:0] dat_oup;
+bit re_we;
+bit submit;
+
+memory_access_controller mac(clk, rst, addr, dat_inp, dat_oup, re_we, submit);
+
+
+always begin
+    #10 clk = ~clk;
+end
+
+always @(posedge clk) begin
+    $display("Clock! %t", $time);
+end
+
+endmodule
+*/
+
 
 
 module tb;
 
 bit clk;
 bit rst;
-bit re;
-bit we;
-bit [31:0] addr;
-bit [127:0] dat_inp;
-bit [15:0] bo_inp;
-logic [127:0] dat_oup;
-logic [15:0] bo_oup;
-logic line_present;
-logic done;
 
-logic [31:0] bs_addr;
-logic [127:0] bs_doup;
-logic [15:0] bs_booup;
-logic bs_we;
-bit bs_done;
+bit [31:0]      fs_addr;
+bit             fs_wr;
+bit             fs_go;
+bit             fs_go_go;
 
+logic           fs_done;
+logic           fs_suc;
+
+bit [127:0]     fs_inp;
+logic [127:0]   fs_oup;
+
+logic [31:0]    bs_addr;
+logic [127:0]   bs_oup;
+logic           bs_we;
+bit             bs_done;
 
 integer i;
 initial begin
     clk = 0;
     bs_done = 1;
-
-    // Write to the cache.
-    addr = 128;
-    addr[12] = 1;
-
-    re = 0;
-    we = 1;
-
-    dat_inp = 128;
-    bo_inp[0] = 1;
-
-    #20
-    
-    // read that cache line back.
-    re = 1;
-    we = 0;
-
-    #20
-
-    // Lets attempt to read a line that we dont have.
-    addr = 420;
-
-    // Now lets attempt to write a bunch of stuff to a set to force it to evict a line.
-    for (i = 0; i < 40; i = i + 1) begin
-
-        #20
-        // incriment the tag.
-        addr = 32'h00010110 + (i * 32'h00100000);       // *** Note to self make sure addr is 128b aligned or issues ensue. ***
-        dat_inp = i * 2;
-        bo_inp = 3;
-
-        re = 0;
-        we = 1;
-    end
-
-    #20
-
-    // Lets try to upate an older cache line.
-    addr = 128;
-    addr[12] = 1;
-
-    we = 1;
-    re = 0;
-    dat_inp = 512;
-    bo_inp = 3;
-
-    #20
-
-    // Now lets read out the line we just modified.
-
-    we = 0;
-    re = 1;
 end
 
 always begin
     #10 clk =~clk;
-    $display("Clock!");
+    if (clk) $display("Clock! %t", $time);
 end
 
-cache #(32, 128) caching(clk, rst, addr, re, we, dat_oup, bo_oup, dat_inp, bo_inp, line_present, done, bs_addr, bs_doup, bs_booup, bs_done, bs_we);
+assign fs_go_go = fs_done ? 0 : fs_go;
+
+bit[7:0] thing;
+always @(posedge clk) begin
+    case(thing)
+
+    // Write to the cache.
+    0:
+    begin
+        fs_go = 1;
+    
+        fs_addr = 128;
+        fs_addr[12] = 1;
+
+        fs_wr = 1;
+
+        fs_inp = 128;
+
+        if (fs_done) begin
+            thing = 1;
+            fs_go = 0;
+        end
+    end
+
+    // Wait a cycle.
+    1:
+    begin
+        thing = 2;
+    end
+
+    // Read cache line back.
+    2:
+    begin
+
+        fs_go = 1;
+        fs_wr = 0;
+
+        if (fs_done) begin
+            thing = 3;
+            fs_go = 0;
+        end
+    end
+
+    // Write another location.
+    3:
+    begin
+
+        fs_go = 1;
+
+        fs_addr = 32'h00010110;// + (i * 32'h00100000);       // *** Note to self make sure addr is 128b aligned or issues ensue. ***
+        fs_inp =  2;
+
+        fs_wr = 1;
+
+
+        if (fs_done) thing = 5;
+    end
+
+    // Wait a cycle.
+    4:
+    begin
+        thing = 5;
+    end
+
+    // Attempt to read back first thing written.
+    5:
+    begin
+        fs_addr = 128;
+        fs_addr[12] = 1;
+
+        fs_wr = 0;
+        
+        if (fs_done) thing = 6;
+    end
+
+    // Attempt to modify the first location.
+    6:
+    begin
+        fs_wr = 1;
+
+        fs_inp = 42069;
+
+
+        if (fs_done) thing = 7;
+    end
+
+    // Write should be done by now (modified line instead of new).
+    7:
+    begin
+        fs_wr = 0;
+    end
+
+    endcase
+end
+// 4 bit line position, 8 bit line select & 20 bit tag.
+l2_cache #(8, 256, 16, 32, 4) caching(clk, rst, fs_addr, fs_wr, fs_go_go, fs_done, fs_suc, fs_inp, fs_oup, bs_addr, bs_oup, bs_we, bs_done);
 
 
 endmodule
+
+
+/*
+module tb;
+
+bit clk;
+bit rst;
+
+bit [31:0]      fs_addr;
+bit             fs_wr;
+bit             fs_go;
+
+logic           fs_done;
+logic           fs_suc;
+
+bit [127:0]     fs_inp;
+logic [127:0]   fs_oup;
+
+logic [31:0]    bs_addr;
+logic [127:0]   bs_oup;
+logic           bs_we;
+bit             bs_done;
+
+integer i;
+initial begin
+    clk = 0;
+    bs_done = 1;
+end
+
+always begin
+    #10 clk =~clk;
+    if (clk) $display("Clock! %t", $time);
+end
+
+bit[7:0] thing;
+always @(posedge clk) begin
+    case(thing)
+
+    // Write to the cache.
+    0:
+    begin
+        fs_go = 1;
+    
+        fs_addr = 128;
+        fs_addr[12] = 1;
+
+        fs_wr = 1;
+
+        fs_inp = 128;
+
+        thing = 1;
+    end
+
+    // Wait a cycle.
+    1:
+    begin
+        thing = 2;
+    end
+
+    // Read cache line back.
+    2:
+    begin
+        fs_wr = 0;
+
+        thing = 3;
+    end
+
+    // Write another location.
+    3:
+    begin
+        fs_addr = 32'h00010110;// + (i * 32'h00100000);       // *** Note to self make sure addr is 128b aligned or issues ensue. ***
+        fs_inp =  2;
+
+        fs_wr = 1;
+
+        thing = 4;
+    end
+
+    // Wait a cycle.
+    4:
+    begin
+        thing = 5;
+    end
+
+    // Attempt to read back first thing written.
+    5:
+    begin
+        fs_addr = 128;
+        fs_addr[12] = 1;
+
+        fs_wr = 0;
+
+        thing = 6;
+    end
+
+    // Attempt to modify the first location.
+    6:
+    begin
+        fs_wr = 1;
+
+        fs_inp = 42069;
+
+        thing = 7;
+    end
+
+    // Write should be done by now (modified line instead of new).
+    7:
+    begin
+        fs_wr = 0;
+    end
+
+    endcase
+end
+// 4 bit line position, 8 bit line select & 20 bit tag.
+l1_cache #(4, 256, 16, 32) caching(clk, rst, fs_addr, fs_wr, fs_go, fs_done, fs_suc, fs_inp, fs_oup, bs_addr, bs_oup, bs_we, bs_done);
+
+
+endmodule
+*/
+
+
 
 
 /*

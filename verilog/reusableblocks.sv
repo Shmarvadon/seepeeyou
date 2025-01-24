@@ -158,7 +158,7 @@ module sipo_buffer #(parameter WIDTH, LENGTH)(
 endmodule
 
 
-/*          Register                */
+/*          Register            */
 module register #(parameter WIDTH, RESET_VAL = 'hFFFFFFFF)(
     input clk,
     input rst,
@@ -181,6 +181,58 @@ module register #(parameter WIDTH, RESET_VAL = 'hFFFFFFFF)(
 endmodule
 
 
+/*          Mux         */
+module multiplexer #(parameter INPUT_WIDTH, INPUT_COUNT)(
+    // Inputs to the mux.
+    input [INPUT_WIDTH-1:0]         mux_inp [INPUT_COUNT-1:0],
+    input [$clog2(INPUT_COUNT)-1:0] inp_sel,
+
+    // Outputs.
+    output bit [INPUT_WIDTH-1:0]    mux_oup
+);
+
+    always_latch begin
+        mux_oup = mux_inp[inp_sel];
+    end
+
+endmodule
+
+
+/*          De-mux         */
+module demultiplexer #(parameter INPUT_WIDTH, OUTPUT_COUNT)(
+    // Inputs to the mux.
+    input [INPUT_WIDTH-1:0]         demux_inp,
+    input [$clog2(OUTPUT_COUNT)-1:0] oup_sel,
+
+    // Outputs.
+    output bit [INPUT_WIDTH-1:0]    demux_oup [OUTPUT_COUNT-1:0]
+);
+
+    always_comb begin
+        for (int i = 0; i < OUTPUT_COUNT; i = i + 1) begin
+            if (oup_sel == i) demux_oup[i] = demux_inp;
+            else demux_oup[i] = 0;
+        end
+    end
+    
+endmodule
+
+module demultiplexer_packed #(parameter OUTPUT_COUNT)(
+    // Inputs to the mux.
+    input                            mux_inp,
+    input [$clog2(OUTPUT_COUNT)-1:0] oup_sel,
+
+    // Outputs.
+    output bit [OUTPUT_COUNT-1:0]    mux_oup
+);
+
+    always_comb begin
+        mux_oup = 0;
+        mux_oup[oup_sel] = mux_inp;
+    end
+    
+endmodule
+
 /*          Gray code counter           */
 //***************** FINISH THIS LATER.
 module graycode_counter #(parameter WIDTH)(
@@ -191,26 +243,26 @@ module graycode_counter #(parameter WIDTH)(
     output bit [WIDTH-1:0] val
 );
 
-bit [WIDTH-1:0] prev_val;
+    bit [WIDTH-1:0] prev_val;
 
-// Handle counting.
-integer i;
-always @(posedge clk) begin
-    // If count enable is high.
-    if (ce) begin
-        // Loop over the bits right to left.
-        for (i = 0; i < WIDTH; i = i + 1) begin
-            // If the digit is the same.
-            if (prev_val[i] == val[i]) begin
-                //val <= val & 
+    // Handle counting.
+    integer i;
+    always @(posedge clk) begin
+        // If count enable is high.
+        if (ce) begin
+            // Loop over the bits right to left.
+            for (i = 0; i < WIDTH; i = i + 1) begin
+                // If the digit is the same.
+                if (prev_val[i] == val[i]) begin
+                    //val <= val & 
+                end
             end
         end
     end
-end
 
-// Handle reset.
-always @(posedge rst) begin
-    val <= 0;
-    prev_val <= 0;
-end
+    // Handle reset.
+    always @(posedge rst) begin
+        val <= 0;
+        prev_val <= 0;
+    end
 endmodule
