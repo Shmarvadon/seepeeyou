@@ -107,6 +107,7 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
         fs_suc = 0;
         line_we = 0;
         bs_we = 0;
+        fs_oup = 0;
 
         // If there is a request to the cache.
         if (fs_go) begin
@@ -153,7 +154,7 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
                     0:
                     begin
 
-                        $display("Attempting to modify if present already.");
+                        $display("Attempting to modify if present already. %t", $time);
                         // Loop over all the lines in the set.
                         for (int i = 0; i < WAYS; i = i + 1) begin
                             // If the tag bits and valid match.
@@ -436,6 +437,7 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
                         mux_sel = 0;
 
                         // Debug printout.
+                        $display("L2 cahche");
                         $display("Unable to find cache line with tag %h in set %d", fs_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], fs_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
                     end
                 end

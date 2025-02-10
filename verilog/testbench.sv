@@ -4,19 +4,52 @@
 
 `include "defines.sv"
 `include "nocstop.sv"
+`include "core_memory_access_controller.sv"
 
-/*
+
+
+
+
 module tb;
 
 bit clk;
 bit rst;
-bit [31:0] addr;
-bit [127:0] dat_inp;
-logic [127:0] dat_oup;
-bit re_we;
-bit submit;
+mac_stage_intf test_interface();
+noc_port noc_prt();
 
-memory_access_controller mac(clk, rst, addr, dat_inp, dat_oup, re_we, submit);
+initial begin
+    test_interface.oup_ra = 1;
+end
+
+
+memory_access_controller mac(clk, rst, test_interface.stage_input, noc_prt);
+
+
+initial begin
+    // Create a memory access request to write a line to cache.
+    test_interface.inp_rp = 1;
+    test_interface.inp_req.addr = 32'h0012014a;
+    test_interface.inp_req.dat = 42069;
+    test_interface.inp_req.orig = 0;
+    test_interface.inp_req.rqt = 1;
+    test_interface.inp_req.rsuc = 0;
+
+    # 20
+
+    // Read from the addr just written to.
+    test_interface.inp_rp = 1;
+    test_interface.inp_req.rqt = 0;
+
+    #20
+
+    // Read from somewhere that isnt in cache yet.
+    test_interface.inp_rp = 1;
+    test_interface.inp_req.addr = 32'h0101a4f8;
+
+    #20
+
+    test_interface.inp_rp = 0;
+end
 
 
 always begin
@@ -28,9 +61,9 @@ always @(posedge clk) begin
 end
 
 endmodule
-*/
 
 
+/*
 
 module tb;
 
@@ -163,7 +196,7 @@ l2_cache #(8, 256, 16, 32, 4) caching(clk, rst, fs_addr, fs_wr, fs_go_go, fs_don
 
 
 endmodule
-
+*/
 
 /*
 module tb;
