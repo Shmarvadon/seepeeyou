@@ -53,6 +53,7 @@ interface mac_stage_intf;
 
 endinterface
 
+// Memory access controller L1 cache stage.
 module mac_l1_stage(
     input clk,
     input rst,
@@ -226,9 +227,9 @@ module mac_l1_stage(
     end
 
     // Handle back side of the cache.
-
 endmodule
 
+// Memory access controller L2 cache stage.
 module mac_l2_stage(
     input clk,
     input rst,
@@ -387,6 +388,55 @@ module mac_l2_stage(
         end
         endcase
     end
+endmodule
+
+// Memory access controller operation scheduler stage.
+module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
+    input clk,
+    input rst,
+
+    // Interface to the input of L1 cache stage.
+    mac_stage_intf stage_1_intf,
+
+    // Interface to the memory access ports.
+    mac_stage_intf port_interfaces [NUMBER_OF_PORTS],
+);
+
+    localparam IFRS_LEN = 64;
+
+    // single input parallel output buffer to hold the addresses of inflight operations.
+    logic                           ifr_we;                 // In flight requests buffer write enable.
+    logic [31:0]                    ifr_inp;                // In flight requests buffer input.
+    logic [31:0]                    ifr_oup [IFRS_LEN];     // In flight requests buffer output.
+    logic [IFRS_LEN]                ifr_clrp;               // In flight requests buffer clear positions.
+    logic [$clog2(IFRS_LEN)-1:0]    ifr_up;                 // In flight requests buffer used positions.
+
+    sipo_buffer #(32, IFRS_LEN) ifrs(clk, rst, ifr_we, ifs_inp, ifr_clrp, ifr_oup, ifr_up);   
+
+
+    // comb block to handle dispatching requests from the ports.
+    bit clash_found;
+    always_comb begin
+        // Default values.
+        clash_found = 0;
+
+
+        // Loop over all the ports that are attempting to submit an operation.
+        for (integer i = 0; i < NUMBER_OF_PORTS; i = i + 1) begin
+            // Set clash_found to 0.
+            clash_found = 0;
+            
+            // Loop over all the in flight requests addresses.
+            for (integer j = 0; j < IFRS_LEN; j = j + 1) begin
+                if (port_interfaces[i].inp_req.addr == ifr_oup[j]) clash_found = 0;
+            end
+        end
+    end
+
+    // This stage should contain a list of all active operations addresses, this way it can block any incoming requests that modify an in flight address.
+    // This stage is also responsible for accepting requests from the ports via a priority decoder.
+    // This stage is also responsible for recieveing successful requests and removing them from the in flight list.
+
 endmodule
 
 module memory_access_controller #(parameter NUMBER_OF_PORTS = 2)(
