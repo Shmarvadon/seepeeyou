@@ -400,6 +400,11 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
 
     // Interface to the memory access ports.
     mac_stage_intf port_interfaces [NUMBER_OF_PORTS],
+
+    // Interface to 
+    input mac_request   [3] returned_requests,
+    input logic         [3] returned_request_present,
+    output logic        [3] returned_request_accepted
 );
 
     localparam IFRS_LEN = 64;
@@ -409,7 +414,8 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
     logic [31:0]                    ifr_inp;                // In flight requests buffer input.
     logic [31:0]                    ifr_oup [IFRS_LEN];     // In flight requests buffer output.
     logic [IFRS_LEN]                ifr_clrp;               // In flight requests buffer clear positions.
-    logic [$clog2(IFRS_LEN)-1:0]    ifr_up;                 // In flight requests buffer used positions.
+    logic [IFRS_LEN-1:0]            ifr_up;                 // In flight requests buffer used positions.
+    logic                           ifr_full;               // In flight requests buffer full.
 
     sipo_buffer #(32, IFRS_LEN) ifrs(clk, rst, ifr_we, ifs_inp, ifr_clrp, ifr_oup, ifr_up);   
 
@@ -419,16 +425,74 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
     always_comb begin
         // Default values.
         clash_found = 0;
+        ifr_full = 1;
+        stage_1_intf.inp_rp = 0;
+        ifr_we = 0;
 
+        // Check if the IFR buffer is full or not.
+        for (integer i = 0; i < IFRS_LEN; i = i + 1) begin
+            if (!ifr_up[i]) ifr_full = 0;
+        end
 
-        // Loop over all the ports that are attempting to submit an operation.
+        // Find a port that is sending a request and is acceptable constrained by not accessing memory an inflight request is using.
+
+        // Loop over all the ports that could attempt to submit an operation.
         for (integer i = 0; i < NUMBER_OF_PORTS; i = i + 1) begin
             // Set clash_found to 0.
             clash_found = 0;
             
-            // Loop over all the in flight requests addresses.
+            // Loop over all the in flight requests addresses to check for any clashes.
             for (integer j = 0; j < IFRS_LEN; j = j + 1) begin
-                if (port_interfaces[i].inp_req.addr == ifr_oup[j]) clash_found = 0;
+                // If the port is submitting a request that would clash with an in flight one then we mark it as such.
+                if (port_interfaces[i].inp_req.addr == ifr_oup[j] && ifr_up[j]) clash_found = 1;
+            end
+
+            // If the port is signalling to send a request & has no clash with in flight requests and we have room to log the request.
+            if (port_interfaces[i].inp_rp && clash_found == 0 && !ifr_full) begin
+                // Hook up the port to stage 1 interface.
+                stage_1_intf.inp_req = port_interfaces[i].inp_req;
+                stage_1_intf.inp_rp = port_interfaces[i].inp_rp;
+                port_interfaces[i].inp_ra = stage_1_intf.inp_ra;
+                
+                // Hook up the signals to the in flight requests buffer to log the address ONCE ACCEPTED.
+                ifr_we = stage_1_intf.inp_ra;
+                ifr_inp = port_interfaces[i].inp_req.addr;
+            end
+            // If any of the above conditions fail then we dont accept this request.
+            else begin
+                // Signal to the port that its request will not be accepted at this time.
+                port_interfaces[i].inp_ra = 0;
+            end
+        end
+    end
+
+    // comb block to handle retiring completed requests. 
+    bit return_accepted;
+    always_comb begin
+        // Default values.
+        return_accepted = 0;
+        ifr_clrp = 0;
+        for (integer i = 0; i < NUMBER_OF_PORTS; i = i + 1) port_interfaces[i].oup_rp = 0;
+
+        // Loop over all the return paths for completed requests.
+        for (integer i = 0; i < 3; i = i + 1) begin
+
+            // If the return path is attempting to return something & we havent already accepted another path.
+            if (returned_request_present[i] & !return_accepted) begin
+
+                // set return accepted.
+                return_accepted = 1;
+
+                // hook up the path to the port it is attempting to return to.
+                port_interfaces[returned_requests[i].orig].oup_req = returned_requests[i];
+                port_interfaces[returned_requests[i].orig].oup_rp = returned_request_present[i];
+                returned_request_accepted[i] = port_interfaces[returned_requests[i].orig].oup_ra;
+
+                // find the position occupied by the request in the in flight requests buffer.
+                for (integer j = 0; j < IFRS_LEN; j = j + 1) begin
+                    // If the entry matches the returning request & the port has accepted it, mark the entry to be cleared.
+                    if (ifr_oup[j] == returned_requests[i].addr && port_interfaces[returned_requests[i].orig].oup_ra) ifr_clrp[j] = 1; 
+                end
             end
         end
     end
