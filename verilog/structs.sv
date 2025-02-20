@@ -50,6 +50,9 @@ typedef struct packed {
 } queued_instruction;
 
 
+
+/*          NEW NOC DEFINITIONS         */
+
 interface noc_port;
 
     // Some stuff to inform the connected IP of its port number and address.

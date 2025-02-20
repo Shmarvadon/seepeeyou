@@ -94,7 +94,7 @@ initial begin
 end
 
 
-memory_access_controller mac(clk, rst, test_interface.stage_input, noc_prt);
+memory_access_controller mac(clk, rst, test_interface.drive_input, noc_prt);
 
 
 initial begin

@@ -140,6 +140,7 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
                     fs_suc = 0;
 
                     // Debug printout.
+                    $display("L1 cahche");
                     $display("Unable to find cache line with tag %h in set %d", fs_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], fs_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
                 end
 
