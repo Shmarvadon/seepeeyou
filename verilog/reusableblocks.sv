@@ -125,8 +125,8 @@ module sipo_buffer #(parameter WIDTH, LENGTH)(
     integer i;
     always_comb begin
         for (i = 0; i < LENGTH; i = i + 1) begin
-            if (used_pos[i]) pri_dec_inp[i] <= 0;
-            else pri_dec_inp[i] <= 1;
+            if (used_pos[i]) pri_dec_inp[i] = 0;
+            else pri_dec_inp[i] = 1;
         end
     end
 
@@ -135,15 +135,15 @@ module sipo_buffer #(parameter WIDTH, LENGTH)(
     always @(posedge clk) begin
         // Loop over all the data positions and erase them if clr_ps is high.
         for (j = 0; j < LENGTH; j = j + 1) begin
-            if (clr_ps[j]) used_pos[j] <= 0;
+            if (clr_ps[j]) used_pos[j] = 0;
         end
 
         // If we is high.
         if (we) begin
             // Shift data into the desired slot.
-            d_oup[pri_dec_oup] <= d_in;
+            d_oup[pri_dec_oup] = d_in;
             // mark the slot as in use.
-            used_pos[pri_dec_oup] <= 1;
+            used_pos[pri_dec_oup] = 1;
         end
     end
 
@@ -151,9 +151,9 @@ module sipo_buffer #(parameter WIDTH, LENGTH)(
     integer k;
     always @(posedge rst) begin
         // Zero the data registers.
-        for (k = 0; k < LENGTH; k = k + 1) d_oup[k] <= 0;
+        for (k = 0; k < LENGTH; k = k + 1) d_oup[k] = 0;
         // Zero the used positions register.
-        used_pos <= 0;
+        used_pos = 0;
     end
 endmodule
 

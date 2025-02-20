@@ -9,6 +9,78 @@
 
 
 
+/*
+module tb;
+
+bit clk;
+bit rst;
+mac_stage_intf l1_stage_intf();
+mac_stage_intf port_intfs [2] ();
+
+mac_request [3] stage_return_requests;
+logic       [3] stage_returns_present;
+logic       [3] stage_returns_accepted;
+
+initial begin
+    l1_stage_intf.inp_ra = 1;
+end
+
+mac_scheduler #(2) scheduler(clk, rst, l1_stage_intf, port_intfs, stage_return_requests, stage_returns_present, stage_returns_accepted);
+
+
+initial begin
+    // Create a memory access request to write a line to cache.
+    port_intfs[0].inp_rp = 1;
+    port_intfs[0].inp_req.addr = 32'h0012014a;
+    port_intfs[0].inp_req.dat = 42069;
+    port_intfs[0].inp_req.orig = 0;
+    port_intfs[0].inp_req.rqt = 1;
+    port_intfs[0].inp_req.rsuc = 0;
+
+    # 20
+
+    // Stop trying to submit a request.
+    port_intfs[0].inp_rp = 0;
+
+    // Try to return the request just submitted.
+    stage_return_requests[0].addr = 32'h0012014a;
+    stage_return_requests[0].orig = 0;
+    stage_returns_present[0] = 1;
+
+    // signal port 0 of the dispatchers to accept the return.
+    port_intfs[0].oup_ra = 1;
+
+    #20
+
+    // Stop trying to return a request.
+    stage_returns_present[0] = 0;
+
+    // Read from the addr just written to.
+    port_intfs[0].inp_rp = 1;
+    port_intfs[0].inp_req.rqt = 0;
+
+    #200
+
+    // Read from somewhere that isnt in cache yet.
+    port_intfs[0].inp_rp = 1;
+    port_intfs[0].inp_req.addr = 32'h0101a4f8;
+
+    #20
+
+    port_intfs[0].inp_rp = 0;
+end
+
+
+always begin
+    #10 clk = ~clk;
+end
+
+always @(posedge clk) begin
+    $display("Clock! %t", $time);
+end
+
+endmodule
+*/
 
 module tb;
 
@@ -61,6 +133,7 @@ always @(posedge clk) begin
 end
 
 endmodule
+
 
 
 /*

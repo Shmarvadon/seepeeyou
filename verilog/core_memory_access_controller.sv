@@ -36,12 +36,12 @@ interface mac_stage_intf;
     // Input to the stage.
     logic           inp_rp;     // Input request present.
     mac_request     inp_req;    // Input request.
-    logic           inp_ra;     // Input request accepted.
+    logic           inp_ra;     // Input request accepted.      Should be put high before the edge where the request is accepted.
 
     // Output from the stage.
     logic           oup_rp;     // Output request present.
     mac_request     oup_req;    // Output request.
-    logic           oup_ra;     // Output request accepted.
+    logic           oup_ra;     // Output request accepted.     Should be put high before the edge where the request is accepted.
 
     // Input to the stage.
     modport stage_input (input inp_rp, input inp_req, output inp_ra,
@@ -396,10 +396,10 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
     input rst,
 
     // Interface to the input of L1 cache stage.
-    mac_stage_intf stage_1_intf,
+    mac_stage_intf.stage_output stage_1_intf,
 
     // Interface to the memory access ports.
-    mac_stage_intf port_interfaces [NUMBER_OF_PORTS],
+    mac_stage_intf.stage_input disp_prts [NUMBER_OF_PORTS],
 
     // Interface to 
     input mac_request   [3] returned_requests,
@@ -412,22 +412,49 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
     // single input parallel output buffer to hold the addresses of inflight operations.
     logic                           ifr_we;                 // In flight requests buffer write enable.
     logic [31:0]                    ifr_inp;                // In flight requests buffer input.
-    logic [31:0]                    ifr_oup [IFRS_LEN];     // In flight requests buffer output.
-    logic [IFRS_LEN]                ifr_clrp;               // In flight requests buffer clear positions.
+    logic [31:0]                    ifr_oup [IFRS_LEN-1:0]; // In flight requests buffer output.
+    logic [IFRS_LEN-1:0]            ifr_clrp;               // In flight requests buffer clear positions.
     logic [IFRS_LEN-1:0]            ifr_up;                 // In flight requests buffer used positions.
     logic                           ifr_full;               // In flight requests buffer full.
 
-    sipo_buffer #(32, IFRS_LEN) ifrs(clk, rst, ifr_we, ifs_inp, ifr_clrp, ifr_oup, ifr_up);   
+    sipo_buffer #(32, IFRS_LEN) ifrs(clk, rst, ifr_we, ifr_inp, ifr_clrp, ifr_oup, ifr_up);   
+
+    // Input to this stage from request dispatchers.
+    mac_request [NUMBER_OF_PORTS] disp_prts_inp_req;
+    logic [NUMBER_OF_PORTS] disp_prts_inp_rp;
+    logic [NUMBER_OF_PORTS] disp_prts_inp_ra;
+
+    // Output from this stage to request dispatchers.
+    mac_request [NUMBER_OF_PORTS] disp_prts_oup_req;
+    logic [NUMBER_OF_PORTS] disp_prts_oup_rp;
+    logic [NUMBER_OF_PORTS] disp_prts_oup_ra;
+
+    genvar i;
+    generate
+        for (i = 0; i < NUMBER_OF_PORTS; i = i + 1) begin
+            always_comb begin
+                disp_prts_inp_req[i] = disp_prts[i].inp_req;
+                disp_prts_inp_rp[i] = disp_prts[i].inp_rp;
+                disp_prts[i].inp_ra = disp_prts_inp_ra[i];
+
+                disp_prts[i].oup_req = disp_prts_oup_req[i];
+                disp_prts[i].oup_rp = disp_prts_oup_rp[i];
+                disp_prts_oup_ra[i] = disp_prts[i].oup_ra;
+            end
+        end
+    endgenerate
 
 
     // comb block to handle dispatching requests from the ports.
     bit clash_found;
+    bit request_accepted;
     always_comb begin
         // Default values.
         clash_found = 0;
         ifr_full = 1;
         stage_1_intf.inp_rp = 0;
         ifr_we = 0;
+        request_accepted = 0;
 
         // Check if the IFR buffer is full or not.
         for (integer i = 0; i < IFRS_LEN; i = i + 1) begin
@@ -438,30 +465,42 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
 
         // Loop over all the ports that could attempt to submit an operation.
         for (integer i = 0; i < NUMBER_OF_PORTS; i = i + 1) begin
-            // Set clash_found to 0.
-            clash_found = 0;
-            
-            // Loop over all the in flight requests addresses to check for any clashes.
-            for (integer j = 0; j < IFRS_LEN; j = j + 1) begin
-                // If the port is submitting a request that would clash with an in flight one then we mark it as such.
-                if (port_interfaces[i].inp_req.addr == ifr_oup[j] && ifr_up[j]) clash_found = 1;
-            end
 
-            // If the port is signalling to send a request & has no clash with in flight requests and we have room to log the request.
-            if (port_interfaces[i].inp_rp && clash_found == 0 && !ifr_full) begin
-                // Hook up the port to stage 1 interface.
-                stage_1_intf.inp_req = port_interfaces[i].inp_req;
-                stage_1_intf.inp_rp = port_interfaces[i].inp_rp;
-                port_interfaces[i].inp_ra = stage_1_intf.inp_ra;
+            // If we have not already accepted a request.
+            if (!request_accepted) begin
+                // Set clash_found to 0.
+                clash_found = 0;
                 
-                // Hook up the signals to the in flight requests buffer to log the address ONCE ACCEPTED.
-                ifr_we = stage_1_intf.inp_ra;
-                ifr_inp = port_interfaces[i].inp_req.addr;
+                // Loop over all the in flight requests addresses to check for any clashes.
+                for (integer j = 0; j < IFRS_LEN; j = j + 1) begin
+                    // If the port is submitting a request that would clash with an in flight one then we mark it as such.
+                    if (disp_prts_inp_req[i].addr == ifr_oup[j] && ifr_up[j])  begin clash_found = 1; $display("Clashed"); end
+                    //if (ifr_up[j]) $display("Potential clash, %d %d, %d", disp_prts_inp_req[i].addr, ifr_oup[j], j);
+                end
+
+                // If the port is signalling to send a request & has no clash with in flight requests and we have room to log the request.
+                if (disp_prts_inp_rp[i] && clash_found == 0 && !ifr_full) begin
+                    // Hook up the port to stage 1 interface.
+                    stage_1_intf.inp_req = disp_prts_inp_req[i];
+                    stage_1_intf.inp_rp  = disp_prts_inp_rp[i];
+                    disp_prts_inp_ra[i]  = stage_1_intf.inp_ra;
+                    
+                    // Hook up the signals to the in flight requests buffer to log the address ONCE ACCEPTED.
+                    ifr_we = stage_1_intf.inp_ra;
+                    ifr_inp = disp_prts_inp_req[i].addr;
+
+                    // Signal that we have accepted a request.
+                    request_accepted = 1;
+                end
+                // If any of the above conditions fail then we dont accept this request.
+                else begin
+                    // Signal to the port that its request will not be accepted at this time.
+                    disp_prts_inp_ra[i] = 0;
+                end
             end
-            // If any of the above conditions fail then we dont accept this request.
+            // If we have already accepted a request then just signal to the port that request accepted is 0.
             else begin
-                // Signal to the port that its request will not be accepted at this time.
-                port_interfaces[i].inp_ra = 0;
+                disp_prts_inp_ra[i] = 0;
             end
         end
     end
@@ -472,7 +511,7 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
         // Default values.
         return_accepted = 0;
         ifr_clrp = 0;
-        for (integer i = 0; i < NUMBER_OF_PORTS; i = i + 1) port_interfaces[i].oup_rp = 0;
+        for (integer i = 0; i < NUMBER_OF_PORTS; i = i + 1) disp_prts_oup_rp[i] = 0;
 
         // Loop over all the return paths for completed requests.
         for (integer i = 0; i < 3; i = i + 1) begin
@@ -484,14 +523,14 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
                 return_accepted = 1;
 
                 // hook up the path to the port it is attempting to return to.
-                port_interfaces[returned_requests[i].orig].oup_req = returned_requests[i];
-                port_interfaces[returned_requests[i].orig].oup_rp = returned_request_present[i];
-                returned_request_accepted[i] = port_interfaces[returned_requests[i].orig].oup_ra;
+                disp_prts_oup_req[returned_requests[i].orig] = returned_requests[i];
+                disp_prts_oup_rp[returned_requests[i].orig] = returned_request_present[i];
+                returned_request_accepted[i] = disp_prts_oup_ra[returned_requests[i].orig];
 
                 // find the position occupied by the request in the in flight requests buffer.
                 for (integer j = 0; j < IFRS_LEN; j = j + 1) begin
                     // If the entry matches the returning request & the port has accepted it, mark the entry to be cleared.
-                    if (ifr_oup[j] == returned_requests[i].addr && port_interfaces[returned_requests[i].orig].oup_ra) ifr_clrp[j] = 1; 
+                    if (ifr_oup[j] == returned_requests[i].addr && disp_prts_oup_ra[returned_requests[i].orig]) ifr_clrp[j] = 1; 
                 end
             end
         end
@@ -516,9 +555,14 @@ module memory_access_controller #(parameter NUMBER_OF_PORTS = 2)(
     mac_stage_intf req_dispatcher_interfaces[NUMBER_OF_PORTS]();
 
     // Shared successful request return path.
-    mac_request suc_req [3];  // Successful request(s).
+    mac_request [3] suc_req;  // Successful request(s).
     logic [3] suc_req_pres;   // Successful request(s) present.
     logic [3] suc_req_acc;    // Successful request(s) accepted.
+
+
+    // Stage 0b.
+    mac_scheduler #(2) stage_0b(clk, rst, stage_1_intf.stage_output, req_dispatcher_interfaces.stage_input, suc_req, suc_req_pres, suc_req_acc);
+
 
 
     // Stage 1.
@@ -547,33 +591,6 @@ module memory_access_controller #(parameter NUMBER_OF_PORTS = 2)(
     assign stage_1_intf.inp_rp = test_interface.inp_rp;
     assign stage_1_intf.inp_req = test_interface.inp_req;
     assign test_interface.inp_ra = stage_1_intf.inp_ra;
-
-    // Handle returning successful requests from either of the 2 stages.
-    mac_request [NUMBER_OF_PORTS] req_rtn_req [3];  // Request return path request.
-    logic [NUMBER_OF_PORTS]       req_rtn_prs [3];  // Request return path request present.
-    logic [NUMBER_OF_PORTS]       req_rtn_acc [3];  // Request return path request accepted.
-
-    // Handle steering the return of requests from each stage to the right port.
-    genvar i;
-    generate
-        for (i = 0; i < 3; i = i + 1) begin : router
-        always_comb begin
-            for (int j = 0; j < NUMBER_OF_PORTS; j = j + 1) begin
-            end
-        end
-        end
-    endgenerate
-
-
-    // Have each stage have a mux to select the port to return the request to.
-    // Have each port have a priority encoder to select which stage to take reply from if more than 1 stage is trying to return something in a given clock cycle.
-
-    mac_request []
-
-    
-
-
-
     
 
     // Handle stage 1 returning a successful request. This is super dumb for now as we just let the testing interface control it.
