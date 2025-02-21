@@ -1,3 +1,6 @@
+`include "defines.svh"
+`include "structs.sv"
+
 // Memory access controller port interface.
 interface mem_acc_prt_intf;
     // Recieve replies from memory access controller.
@@ -23,24 +26,24 @@ interface mem_acc_prt_intf;
                        input tx_av, output tx_re, input tx_addr, input tx_dat, input tx_len);
 endinterface
 
-typedef struct packed {
+typedef struct packed { // MSB
     logic [31:0]    addr;  // Request address.
     logic [127:0]   dat;   // Request data.
     logic [3:0]     orig;  // Request origin port. (only applicable if read operation).
     logic           rqt;   // Request type.
     logic           rsuc;  // Request success.
-} mac_request;
+} mem_acc_req;          // LSB
 
 interface mac_stage_intf;
 
     // Input to the stage.
     logic           inp_rp;     // Input request present.
-    mac_request     inp_req;    // Input request.
+    mem_acc_req     inp_req;    // Input request.
     logic           inp_ra;     // Input request accepted.      Should be put high before the edge where the request is accepted.
 
     // Output from the stage.
     logic           oup_rp;     // Output request present.
-    mac_request     oup_req;    // Output request.
+    mem_acc_req     oup_req;    // Output request.
     logic           oup_ra;     // Output request accepted.     Should be put high before the edge where the request is accepted.
 
     // Input to the stage.
@@ -65,7 +68,7 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
     mac_stage_intf.drive_output disp_prts [NUMBER_OF_PORTS],
 
     // Interface to 
-    input mac_request   [3] returned_requests,
+    input mem_acc_req   [3] returned_requests,
     input logic         [3] returned_request_present,
     output logic        [3] returned_request_accepted
 );
@@ -83,12 +86,12 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
     sipo_buffer #(32, IFRS_LEN) ifrs(clk, rst, ifr_we, ifr_inp, ifr_clrp, ifr_oup, ifr_up);   
 
     // Input to this stage from request dispatchers.
-    mac_request [NUMBER_OF_PORTS] disp_prts_inp_req;
+    mem_acc_req [NUMBER_OF_PORTS] disp_prts_inp_req;
     logic [NUMBER_OF_PORTS] disp_prts_inp_rp;
     logic [NUMBER_OF_PORTS] disp_prts_inp_ra;
 
     // Output from this stage to request dispatchers.
-    mac_request [NUMBER_OF_PORTS] disp_prts_oup_req;
+    mem_acc_req [NUMBER_OF_PORTS] disp_prts_oup_req;
     logic [NUMBER_OF_PORTS] disp_prts_oup_rp;
     logic [NUMBER_OF_PORTS] disp_prts_oup_ra;
 
@@ -175,6 +178,7 @@ module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
         return_accepted = 0;
         ifr_clrp = 0;
         for (integer i = 0; i < NUMBER_OF_PORTS; i = i + 1) disp_prts_oup_rp[i] = 0;
+        for (integer i = 0; i < 3; i = i + 1) returned_request_accepted[i] = 0;
 
         // Loop over all the return paths for completed requests.
         for (integer i = 0; i < 3; i = i + 1) begin
@@ -213,7 +217,7 @@ module mac_l1_stage(
     mac_stage_intf req_intf,
 
     // Return channel for completed requests.
-    output mac_request completed_request_output,
+    output mem_acc_req completed_request_output,
     output logic completed_request_present,
     input   completed_request_accepted
 );
@@ -235,11 +239,11 @@ module mac_l1_stage(
     l1_cache #(4, 256, 16, 32) l1_cache(clk, rst, fs_addr, fs_wr, fs_go, fs_done, fs_suc, fs_inp, fs_oup, bs_addr, bs_oup, bs_we, bs_done);
 
     // Input request buffer.
-    mac_request         ar;         // Active request.
+    mem_acc_req         ar;         // Active request.
     logic [3:0]         rql;        // Request queue length.
     logic               rq_we;      // Request queue write enable.
     logic               rq_se = 0;      // Request queue shift enable.
-    fifo_queue #($bits(mac_request), 8) request_queue(clk, rst, req_intf.inp_req, ar, rql, rq_we, rq_se);
+    fifo_queue #($bits(mem_acc_req), 8) request_queue(clk, rst, req_intf.inp_req, ar, rql, rq_we, rq_se);
 
     // If there is a request to input a new request & the queue has room then we bring write enable high.
     assign rq_we = rql != 8 ? req_intf.inp_rp : 0;
@@ -389,7 +393,7 @@ module mac_l2_stage(
     mac_stage_intf req_intf,
 
     // Return channel for completed requests.
-    output mac_request  comp_req_oup,   // Completed request output.
+    output mem_acc_req  comp_req_oup,   // Completed request output.
     output logic        comp_req_pre,   // Completed request present.
     input               comp_req_ac     // Completed request accepted.
 );
@@ -410,11 +414,11 @@ module mac_l2_stage(
     l2_cache #(8, 256, 16, 32, 4) l2_cache(clk, rst, fs_addr, fs_wr, fs_go, fs_done, fs_suc, fs_inp, fs_oup, bs_addr, bs_oup, bs_we, bs_done);
 
     // request input buffer.
-    mac_request         ar;         // Active request.
+    mem_acc_req         ar;         // Active request.
     logic [3:0]         rql;        // Request queue length.
     logic               rq_we;      // Request write enable.
     logic               rq_se = 0;  // Request shift enable.
-    fifo_queue #($bits(mac_request), 8) request_queue(clk, rst, req_intf.inp_req, ar, rql, rq_we, rq_se);
+    fifo_queue #($bits(mem_acc_req), 8) request_queue(clk, rst, req_intf.inp_req, ar, rql, rq_we, rq_se);
 
     // If there is a request to input a new request & the queue has room then we bring write enable high.
     assign rq_we = rql != 8 ? req_intf.inp_rp : 0;
@@ -548,17 +552,84 @@ module mac_noc_stage(
 
 
     // Interface to input and output requests from this stage.
-    mac_stage_intf req_intf,
+    mac_stage_intf.drive_output req_intf,
 
     // Return channel for completed requests.
-    output mac_request  comp_req_oup,   // Completed request output.
+    output mem_acc_req  comp_req_oup,   // Completed request output.
     output logic        comp_req_pre,   // Completed request present.
-    input               comp_req_ac     // Completed request accepted.
+    input               comp_req_ac,    // Completed request accepted.
 
     // NOC stop port.
-    noc_port 
+    noc_ip_port.ip_side noc_prt         // NOC IP interface port to dispatch requests to SOC IMC.
 );
 
+    // request input buffer.
+    mem_acc_req         ar;         // Active request.
+    logic [3:0]         rql;        // Request queue length.
+    logic               rq_we;      // Request write enable.
+    logic               rq_se = 0;  // Request shift enable.
+    fifo_queue #($bits(mem_acc_req), 8) request_queue(clk, rst, req_intf.inp_req, ar, rql, rq_we, rq_se);
+
+    // If there is a request to input a new request & the queue has room then we bring write enable high.
+    assign rq_we = rql != 8 ? req_intf.inp_rp : 0;
+    // If write enable is high then we must have accepted the request.
+    assign req_intf.inp_ra = rq_we ? 1 : 0;
+
+    // Assign stuff to drive noc ip port tx lines.
+    assign noc_prt.tx_dat.dat = ar;
+
+    assign noc_prt.tx_dat.hdr.src_port = noc_prt.prt_num;
+    assign noc_prt.tx_dat.hdr.src_addr = noc_prt.prt_addr;
+
+    assign noc_prt.tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
+    assign noc_prt.tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
+
+    assign noc_prt.tx_dat.hdr.len = ($bits(mem_acc_req) / 8) + ($bits(noc_packet_header) / 8);   // Length of packet is length of header + length of payload.
+
+
+    // Comb block for submitting the request to NOC.
+    always_comb begin
+        // Default values.
+        rq_se = 0;
+        noc_prt.tx_av = 0;
+
+        // Check if request queue length is > 0 then lets signal to noc port that we want to send it a request.
+        if (rql > 0) begin
+            // Signal to the noc stop that we want to send a packet to it.
+            noc_prt.tx_av = 1;
+
+            // If the noc stop accepts the request then we signal to the request queue to shift to next request on clk.
+            if (noc_prt.tx_re) begin
+                rq_se = 1;
+            end
+        end
+    end
+
+    // Logic to recieve replies from the NOC for the memory access requests & buffer them in an 8 long shift reg for return to the scheduler when its able to accept them.
+
+    // request output buffer.
+    mem_acc_req         comp_req_q_oup;         // Active request.
+    logic [3:0]         comp_req_q_len;         // Completed request queue length.
+    logic               comp_req_q_we;          // Completed request write enable.
+    logic               comp_req_q_se;          // Completed request shift enable.
+    fifo_queue #($bits(mem_acc_req), 8) comptd_req_q(clk, rst, noc_prt.rx_dat.dat[0+:$bits(mem_acc_req)], comp_req_q_oup, comp_req_q_len, comp_req_q_we, comp_req_q_se);
+
+    // If the noc has an rx to return & queue isnt full accept it.
+    assign comp_req_q_we = comp_req_q_len != 8 ? noc_prt.rx_av : 0;
+
+    // Assign write enable for the queue to drive the "request read" response to the NOC stop.
+    assign noc_prt.rx_re = comp_req_q_we;
+
+
+    // Some assigns to handle returning stuff from the queue to the scheduler.
+
+
+    // Assign the output of the completed request buffer to drive the return path.
+    assign comp_req_oup = comp_req_q_oup;
+    // Signal a completed request is present if the queue is longer than 0.
+    assign comp_req_pre = comp_req_q_len != 0 ? 1 : 0;
+    // If the scheduler accepts the return then signal the queue to shift.
+    assign comp_req_q_se = comp_req_ac;
 endmodule
 
 
@@ -569,7 +640,7 @@ module memory_access_controller #(parameter NUMBER_OF_PORTS = 2)(
     // Basic interface for testing. ASSUME ALL REQUESTS ARE ALIGNED.
     mac_stage_intf      testing_interface,
 
-    noc_port            noc_acc_prt
+    noc_ip_port.ip_side            noc_prt
 );
     // request dispatcher interfaces.
     mac_stage_intf req_dispatcher_interfaces[NUMBER_OF_PORTS]();
@@ -577,7 +648,7 @@ module memory_access_controller #(parameter NUMBER_OF_PORTS = 2)(
     
 
     // Shared successful request return path.
-    mac_request [3] rtn_req;  // Successful request(s).
+    mem_acc_req [3] rtn_req;  // Successful request(s).
     logic [3] rtn_req_pres;   // Successful request(s) present.
     logic [3] rtn_req_acc;    // Successful request(s) accepted.
 
@@ -596,10 +667,20 @@ module memory_access_controller #(parameter NUMBER_OF_PORTS = 2)(
 
     mac_l2_stage stage_2(clk, rst, stage_2_intf.drive_output, rtn_req[1], rtn_req_pres[1], rtn_req_acc[1]);
 
+    // Stage 3.
+    mac_stage_intf stage_3_intf();      // Stage 3 interface.
+
+    mac_noc_stage stage_3(clk, rst, stage_3_intf.drive_output, rtn_req[2], rtn_req_pres[2], rtn_req_acc[2], noc_prt);
+
     // Connect stage 1 output to stage 2 input.
     assign stage_2_intf.inp_rp = stage_1_intf.oup_rp;
     assign stage_2_intf.inp_req = stage_1_intf.oup_req;
     assign stage_1_intf.oup_ra = stage_2_intf.inp_ra;
+
+    // Connect stage 2 output to stage 3 input.
+    assign stage_3_intf.inp_rp = stage_2_intf.oup_rp;
+    assign stage_3_intf.inp_req = stage_2_intf.oup_req;
+    assign stage_2_intf.oup_ra = stage_3_intf.inp_ra;
 
 
     // Handle driving stage 0b from the testing interface.

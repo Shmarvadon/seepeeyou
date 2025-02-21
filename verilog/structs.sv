@@ -53,32 +53,51 @@ typedef struct packed {
 
 /*          NEW NOC DEFINITIONS         */
 
-interface noc_port;
+
+// port for IP blocks to interface with NOC stop.
+interface noc_ip_port;
 
     // Some stuff to inform the connected IP of its port number and address.
-    logic [7:0] port_address;
-    logic [7:0] port_number;
+    logic [3:0] prt_addr;
+    logic [3:0] prt_num;
 
     // From the noc_stop to the connected IP block.
-    noc_port_status prt_rx_stat;    // Rx port status.
     logic rx_av;                    // Port rx available.
-    logic rx_re;                    // Port rx read.
-    packet rx_dat;                  // Port rx data.
+    logic rx_re;                    // Port rx read.        Should go high before clock edge where rx is accepted.
+    noc_packet rx_dat;              // Port rx data.
 
     // From the connected IP block to noc_stop.
-    noc_port_status prt_tx_stat;    // Tx port status.
     logic tx_av;                    // Port tx available.
-    logic tx_re;                    // Port tx read.
-    packet tx_dat;                  // Port tx data.
+    logic tx_re;                    // Port tx read.        Should go high before clock edge where tx is accepted.
+    noc_packet tx_dat;              // Port tx data.
 
     // NOC side of the interface.
-    modport noc_side (output port_address, output port_number, output prt_rx_stat,
-                      output rx_av, input rx_re, output rx_dat, output prt_tx_stat,
-                      input tx_av, output tx_re, input tx_dat);
+    modport noc_side (output prt_addr, output prt_num, output rx_av, 
+                      input rx_re, output rx_dat, input tx_av, 
+                      output tx_re, input tx_dat);
 
     // IP block side of the interface.
-    modport ip_side(input port_address, input port_number, input prt_rx_stat,
-                    input rx_av, output rx_re, input rx_dat, input prt_tx_stat,
-                    output tx_av, input tx_re, output tx_dat);
+    modport ip_side (input prt_addr, input prt_num, input rx_av,
+                     output rx_re, input rx_dat, output tx_av,
+                     input tx_re, output tx_dat);
 
 endinterface
+
+// Should be 3 bytes in size.
+typedef struct packed { // MSB
+    logic [3:0] src_addr;
+    logic [3:0] src_port;
+
+    logic [3:0] dst_addr;
+    logic [3:0] dst_port;
+
+    logic [7:0] len;                // Maximum length of 36B for enire packet, 32B for payload.
+} noc_packet_header;    // LSB
+
+// Represents maximum packet size of 36B
+typedef struct packed { // MSB
+    logic [255:0]       dat;        // Dont really care whats in here. Its for the IP block on recieveing end to deal with. Also length is just a placeholder, actual length of packet can be shorter.
+    noc_packet_header   hdr;        // Standard header for the packet.
+} noc_packet;           // LSB
+
+

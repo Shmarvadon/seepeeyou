@@ -3,7 +3,7 @@
 
 
 `include "structs.sv"
-`include "defines.sv"
+`include "defines.svh"
 `timescale 1ps/1ps
 
 module soc(

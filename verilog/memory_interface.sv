@@ -1,5 +1,5 @@
 `include "structs.sv"
-`include "defines.sv"
+`include "defines.svh"
 
 module memory_interface(
     input rst,

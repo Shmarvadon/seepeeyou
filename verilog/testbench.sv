@@ -2,11 +2,104 @@
 
 
 
-`include "defines.sv"
-`include "nocstop.sv"
+`include "defines.svh"
+//`include "nocstop.sv"
 `include "core_memory_access_controller.sv"
 
 
+module tb;
+
+bit clk;
+bit rst;
+mac_stage_intf test_interface();
+noc_ip_port noc_prt();                  // ADD SOME LOGIC HERE TO ACCEPT PACKETS AND REFLECT THEM AFTER N CYCLES.
+
+initial begin
+    test_interface.oup_ra = 1;
+end
+
+
+memory_access_controller mac(clk, rst, test_interface.drive_input, noc_prt);
+
+
+initial begin
+    // Create a memory access request to write a line to cache.
+    test_interface.inp_rp = 1;
+    test_interface.inp_req.addr = 32'h0012014a;
+    test_interface.inp_req.dat = 42069;
+    test_interface.inp_req.orig = 0;
+    test_interface.inp_req.rqt = 1;
+    test_interface.inp_req.rsuc = 0;
+
+    # 20
+
+    // Read from the addr just written to.
+    test_interface.inp_rp = 1;
+    test_interface.inp_req.rqt = 0;
+
+    #20
+
+    // Read from somewhere that isnt in cache yet.
+    test_interface.inp_rp = 1;
+    test_interface.inp_req.addr = 32'h0101a4f8;
+
+    #20
+
+    test_interface.inp_rp = 0;
+end
+
+always @(posedge clk) begin
+    // If there is a request to the NOC from the mac.
+    if (noc_prt.tx_av) begin
+        // Move the request to the rx bit of the port.
+        noc_prt.rx_dat.hdr.src_addr = noc_prt.tx_dat.hdr.dst_addr;
+        noc_prt.rx_dat.hdr.src_port = noc_prt.tx_dat.hdr.dst_port;
+
+        noc_prt.rx_dat.hdr.dst_addr = noc_prt.tx_dat.hdr.src_addr;
+        noc_prt.rx_dat.hdr.dst_port = noc_prt.tx_dat.hdr.src_port;
+
+        noc_prt.rx_dat.hdr.len = noc_prt.tx_dat.hdr.len;
+
+        noc_prt.rx_dat.dat = noc_prt.tx_dat.dat;
+        noc_prt.rx_dat.dat[0] = 1;
+
+        $display("Recieved request to NOC, pinging it back in a few cycles.");
+
+        // Signal that we have accepted it.
+
+        noc_prt.tx_re = 1;
+
+        // Wait a cycle.
+        # 20;
+
+        // Stop signalling that we accepted it.
+        noc_prt.tx_re = 0;
+
+        // Wait a bunch of cycles.
+        #60;
+
+        $display("Request being pinged back now.");
+
+        // Signal that a reply is ready.
+        noc_prt.rx_av = 1;
+
+        // Wait a cycle.
+        #20;
+
+        noc_prt.rx_av = 0;
+    end
+end
+
+
+always begin
+    #10 clk = ~clk;
+end
+
+always @(posedge clk) begin
+    $display("Clock! %t", $time);
+end
+
+endmodule
 
 
 /*
@@ -81,58 +174,6 @@ end
 
 endmodule
 */
-
-module tb;
-
-bit clk;
-bit rst;
-mac_stage_intf test_interface();
-noc_port noc_prt();
-
-initial begin
-    test_interface.oup_ra = 1;
-end
-
-
-memory_access_controller mac(clk, rst, test_interface.drive_input, noc_prt);
-
-
-initial begin
-    // Create a memory access request to write a line to cache.
-    test_interface.inp_rp = 1;
-    test_interface.inp_req.addr = 32'h0012014a;
-    test_interface.inp_req.dat = 42069;
-    test_interface.inp_req.orig = 0;
-    test_interface.inp_req.rqt = 1;
-    test_interface.inp_req.rsuc = 0;
-
-    # 20
-
-    // Read from the addr just written to.
-    test_interface.inp_rp = 1;
-    test_interface.inp_req.rqt = 0;
-
-    #20
-
-    // Read from somewhere that isnt in cache yet.
-    test_interface.inp_rp = 1;
-    test_interface.inp_req.addr = 32'h0101a4f8;
-
-    #20
-
-    test_interface.inp_rp = 0;
-end
-
-
-always begin
-    #10 clk = ~clk;
-end
-
-always @(posedge clk) begin
-    $display("Clock! %t", $time);
-end
-
-endmodule
 
 
 
