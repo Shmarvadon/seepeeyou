@@ -1,211 +1,227 @@
 `include "defines.svh"
 `include "structs.sv"
 
-// Memory access controller port interface.
-interface mem_acc_prt_intf;
-    // Recieve replies from memory access controller.
-    logic           rx_av;      // Rx available.
-    logic           rx_re;      // Rx read.
-    logic [31:0]    rx_addr;    // Rx memory access address.
-    logic [127:0]   rx_dat;     // Rx data.
-    logic [3:0]     rx_len;     // Rx length.
+// Each cache is 2 port: 1 read, 1 write.
+// Each cache has a seperate read & write queue.
 
-    // Send memory access requests to the memory access controller.
-    logic           tx_av;      // Tx available.
-    logic           tx_re;      // Tx read.
-    logic [31:0]    tx_addr;    // Tx memory access address.
-    logic [127:0]   tx_dat;     // Tx data.
-    logic [3:0]     tx_len;     // Tx length.
+// Struct to store the currently active requests.
+typedef struct packed {
+    logic [31:0]    addr;   // Request address.
+    logic [127:0]   dat;    // Request data.
+    logic [15:0]    wmsk;   // Request write mask.
+    logic           rqt;    // Request type (0 = read, 1 = write).
+    logic [3:0]     prt:    // Request origin port.
+} line_acc_req;
 
-    // Core backend side of the interface.
-    modport front_side (input rx_av, output rx_re, input rx_addr, input rx_dat, input rx_len,
-                        output tx_av, input tx_re, output tx_addr, output tx_dat, output tx_len);
+// Struct to pass a line read request.
+typedef struct packed {
+    logic [31:0] addr;
+} line_read_req;
 
-    // memory access controller port side of the interface.
-    modport back_side (output rx_av, input rx_re, output rx_addr, output rx_dat, output rx_len,
-                       input tx_av, output tx_re, input tx_addr, input tx_dat, input tx_len);
-endinterface
+// Struct to pass a line read reply.
+typedef struct packed {
+    logic [31:0] addr;
+    logic [127:0] dat;
+} line_read_reply;
 
-typedef struct packed { // MSB
-    logic [31:0]    addr;  // Request address.
-    logic [127:0]   dat;   // Request data.
-    logic [3:0]     orig;  // Request origin port. (only applicable if read operation).
-    logic           rqt;   // Request type.
-    logic           rsuc;  // Request success.
-} mem_acc_req;          // LSB
+// Struct to pass line write request.
+typedef struct packed {
+    logic [31:0] addr;
+    logic [127:0] dat;
+} line_write_req;
 
-interface mac_stage_intf;
-
-    // Input to the stage.
-    logic           inp_rp;     // Input request present.
-    mem_acc_req     inp_req;    // Input request.
-    logic           inp_ra;     // Input request accepted.      Should be put high before the edge where the request is accepted.
-
-    // Output from the stage.
-    logic           oup_rp;     // Output request present.
-    mem_acc_req     oup_req;    // Output request.
-    logic           oup_ra;     // Output request accepted.     Should be put high before the edge where the request is accepted.
-
-    // Input to the stage.
-    modport drive_output (input inp_rp, input inp_req, output inp_ra,
-                         output oup_rp, output oup_req, input oup_ra);
-    
-    // Output from the stage.
-    modport drive_input (output inp_rp, output inp_req, input inp_ra,
-                          input oup_rp, input oup_req, output oup_ra);
-
-endinterface
-
-// Memory access controller operation scheduler stage.
-module mac_scheduler #(parameter NUMBER_OF_PORTS = 2)(
+module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
     input clk,
     input rst,
 
-    // Interface to the input of L1 cache stage.
-    mac_stage_intf.drive_input stage_1_intf,
+    // Communicate with the front end ports.
 
-    // Interface to the memory access ports.
-    mac_stage_intf.drive_output disp_prts [NUMBER_OF_PORTS],
+    // Request submission.
+    input  logic [NUM_PORTS]         fs_prts_inp_rp,     // Front end ports input request present.
+    input  line_acc_req [NUM_PORTS]  fs_prts_inp_req,    // Front end ports input request.
+    output logic [NUM_PORTS]         fs_prts_inp_op,     // Front end ports input open.
 
-    // Interface to 
-    input mem_acc_req   [3] returned_requests,
-    input logic         [3] returned_request_present,
-    output logic        [3] returned_request_accepted
+    // Request reply.
+    output logic [NUM_PORTS]         fs_prts_oup_rp,     // Front end ports output request present.
+    output line_acc_req              fs_prts_oup_req,    // Front end ports output request.
+    input logic [NUM_PORTS]          fs_prts_oup_op,     // Front end ports output open.
+
+
+    // Input to stage 1 of mem access controller.
+
+    // Read port.
+    output logic            stg_1_rdp_rp,   // Stage 1 read port request present.
+    output line_read_req    stg_1_rdp_req,  // Stage 1 read port request.
+    input  logic            stg_1_rdp_op,   // Stage 1 read port open.
+
+    // Write port.
+    output logic            stg_1_wrp_rp,   // Stage 1 write port request present.
+    output line_write_req   stg_1_wrp_req,  // Stage 1 write port request.
+    input  logic            stg_1_wrp_op,   // Stage 1 write port open.
+
+
+    // Output from the L1, L2 & NOC stages returning read replies.
+    input logic [3]             rd_rpl_p,   // Read reply present.
+    input line_read_reply [3]   rd_rpl,     // Read reply.
+    output logic [3]            rd_rpl_a    // Read reply accepted.
 );
-
+    // Local parameters.
     localparam IFRS_LEN = 64;
+    localparam RDRPL_Q_LEN = 4;
 
-    // single input parallel output buffer to hold the addresses of inflight operations.
+    // Buffer to hold the in flight requests.
     logic                           ifr_we;                 // In flight requests buffer write enable.
-    logic [31:0]                    ifr_inp;                // In flight requests buffer input.
-    logic [31:0]                    ifr_oup [IFRS_LEN-1:0]; // In flight requests buffer output.
+    line_acc_req                    ifr_inp;                // In flight requests buffer input.
+    line_acc_req                    ifr_oup [IFRS_LEN-1:0]; // In flight requests buffer output.
     logic [IFRS_LEN-1:0]            ifr_clrp;               // In flight requests buffer clear positions.
     logic [IFRS_LEN-1:0]            ifr_up;                 // In flight requests buffer used positions.
     logic                           ifr_full;               // In flight requests buffer full.
 
-    sipo_buffer #(32, IFRS_LEN) ifrs(clk, rst, ifr_we, ifr_inp, ifr_clrp, ifr_oup, ifr_up);   
-
-    // Input to this stage from request dispatchers.
-    mem_acc_req [NUMBER_OF_PORTS] disp_prts_inp_req;
-    logic [NUMBER_OF_PORTS] disp_prts_inp_rp;
-    logic [NUMBER_OF_PORTS] disp_prts_inp_ra;
-
-    // Output from this stage to request dispatchers.
-    mem_acc_req [NUMBER_OF_PORTS] disp_prts_oup_req;
-    logic [NUMBER_OF_PORTS] disp_prts_oup_rp;
-    logic [NUMBER_OF_PORTS] disp_prts_oup_ra;
-
-    genvar i;
-    generate
-        for (i = 0; i < NUMBER_OF_PORTS; i = i + 1) begin
-            always_comb begin
-                disp_prts_inp_req[i] = disp_prts[i].inp_req;
-                disp_prts_inp_rp[i] = disp_prts[i].inp_rp;
-                disp_prts[i].inp_ra = disp_prts_inp_ra[i];
-
-                disp_prts[i].oup_req = disp_prts_oup_req[i];
-                disp_prts[i].oup_rp = disp_prts_oup_rp[i];
-                disp_prts_oup_ra[i] = disp_prts[i].oup_ra;
-            end
-        end
-    endgenerate
+    sipo_buffer #($bits(line_acc_req), IFRS_LEN) ifrs(clk, rst, ifr_we, ifr_inp, ifr_clrp, ifr_oup, ifr_up);  
 
 
-    // comb block to handle dispatching requests from the ports.
-    bit clash_found;
-    bit request_accepted;
+    // Comb block to handle retirement of requests.
+    bit [1:0] rd_rtn_sel;   // Read return path select.
+    bit [$clog2(IFRS_LEN)-1:0] rd_rtn_par_ind;  // Read return parent request index.
     always_comb begin
         // Default values.
-        clash_found = 0;
-        ifr_full = 1;
-        stage_1_intf.inp_rp = 0;
-        ifr_we = 0;
-        request_accepted = 0;
+        fs_prts_oup_rp = 0;
+        stg_1_wrp_rp = 0;
+        rd_rpl_a = 0;
 
-        // Check if the IFR buffer is full or not.
-        for (integer i = 0; i < IFRS_LEN; i = i + 1) begin
-            if (!ifr_up[i]) ifr_full = 0;
-        end
+        // Check if there is a read returning. If so then handle the retirement of the request.
+        if (rd_rpl_p != 0) begin
 
-        // Find a port that is sending a request and is acceptable constrained by not accessing memory an inflight request is using.
+            // Priority encoder to favour return path 0 over 1, 1 over 2 & 2 over 3.
+            for (integer i = 2; i >= 0; i = i - 1) begin if (rd_rpl_p[i]) rd_rtn_sel = i; end
 
-        // Loop over all the ports that could attempt to submit an operation.
-        for (integer i = 0; i < NUMBER_OF_PORTS; i = i + 1) begin
+            // Now find the parent requests location in the in flight buffer.
+            for (integer i = 0; i < IFRS_LEN; i = i + 1) begin
+                if (rd_rpl[rd_rtn_sel].addr == ifr_oup[i].addr) rd_rtn_par_ind = i;
+            end
 
-            // If we have not already accepted a request.
-            if (!request_accepted) begin
-                // Set clash_found to 0.
-                clash_found = 0;
-                
-                // Loop over all the in flight requests addresses to check for any clashes.
-                for (integer j = 0; j < IFRS_LEN; j = j + 1) begin
-                    // If the port is submitting a request that would clash with an in flight one then we mark it as such.
-                    if (disp_prts_inp_req[i].addr == ifr_oup[j] && ifr_up[j])  begin clash_found = 1; $display("Clashed"); end
-                    //if (ifr_up[j]) $display("Potential clash, %d %d, %d", disp_prts_inp_req[i].addr, ifr_oup[j], j);
-                end
+            // Now setup the retirement for the parent operation.
 
-                // If the port is signalling to send a request & has no clash with in flight requests and we have room to log the request.
-                if (disp_prts_inp_rp[i] && clash_found == 0 && !ifr_full) begin
-                    // Hook up the port to stage 1 interface.
-                    stage_1_intf.inp_req = disp_prts_inp_req[i];
-                    stage_1_intf.inp_rp  = disp_prts_inp_rp[i];
-                    disp_prts_inp_ra[i]  = stage_1_intf.inp_ra;
-                    
-                    // Hook up the signals to the in flight requests buffer to log the address ONCE ACCEPTED.
-                    ifr_we = stage_1_intf.inp_ra;
-                    ifr_inp = disp_prts_inp_req[i].addr;
+            // Drive the L1 write port input appropriately.
 
-                    // Signal that we have accepted a request.
-                    request_accepted = 1;
-                end
-                // If any of the above conditions fail then we dont accept this request.
-                else begin
-                    // Signal to the port that its request will not be accepted at this time.
-                    disp_prts_inp_ra[i] = 0;
+            stg_1_wrp_req.addr = ifr_oup[rd_rtn_par_ind].addr;  // Assign address.
+
+            if (ifr_oup[rd_rtn_par_ind].rqt) begin              // If a write operation.
+
+                // Loop over the bytes to be written and write them per mask or preserve them.
+                for (integer i = 0; i < 15; i = i + 1) begin
+                    // If the mask bit is set, write the byte.
+                    if (ifr_oup[rd_rtn_par_ind].wmsk[i]) stg_1_wrp_req.dat[(i*8) +:8] = ifr_oup[rd_rtn_par_ind].dat[(i*8) +:8];
+                    else stg_1_wrp_req.dat[(i*8) +:8] = rd_rpl[rd_rtn_sel].dat[(i*8) +:8];
                 end
             end
-            // If we have already accepted a request then just signal to the port that request accepted is 0.
+            else begin                                          // If a read operation.
+                // Assign the read cache line to the write port of stage 1.
+                stg_1_wrp_req.dat = rd_rpl[rd_rtn_sel].dat;
+            end
+
+            // Now handle ensuring that the request is retired properly.
+
+            // If the request is a read type.
+            if (!ifr_oup[rd_rtn_par_ind].rqt) begin
+
+                // Drive the front end port.
+                fs_prts_oup_req[ifr_oup[rd_rtn_par_ind].prt] = ifr_oup[rd_rtn_par_ind];
+                fs_prts_oup_req[ifr_oup[rd_rtn_par_ind].prt].dat = stg_1_wrp_req.dat;
+
+                // If the front end port & L1 can both accept the retirement.
+                if (fs_prts_oup_op[ifr_oup[rd_rtn_par_ind].prt] && stg_1_wrp_op) begin
+                    // Signal to the front end that we are sending it a reply.
+                    fs_prts_oup_rp[ifr_oup[rd_rtn_par_ind].prt] = 1;
+                    // Signal to L1 cache that we are sending it a write.
+                    stg_1_wrp_rp = 1;
+
+                    // Signal to the stage returning the reply that we have it.
+                    rd_rpl_a[rd_rtn_sel] = 1;
+                end
+            end
+            // If the request is not a read type (its a write).
             else begin
-                disp_prts_inp_ra[i] = 0;
-            end
-        end
-    end
+                // signal to L1 cache that we want to submit a write operation.
+                stg_1_wrp_rp = 1;
 
-    // comb block to handle retiring completed requests. 
-    bit return_accepted;
+                // Signal to the stage that returned us the read reply that its done if stage 1 accepts it.
+                rd_rpl_a[rd_rtn_sel] = stg_1_wrp_op;
+            end
+
+            // On the next clock edge, if there is a read reply & the conditions are met to retire it then it will be retired & the rd_rpl_p
+            // signal will go low for the port currently selected and another request could be retired.
+        end
+    end 
+
+
+    // Comb block for handling dispatching of requests.
+    bit [$clog2(NUM_PORTS)-1:0] fs_prt_sel;
     always_comb begin
-        // Default values.
-        return_accepted = 0;
-        ifr_clrp = 0;
-        for (integer i = 0; i < NUMBER_OF_PORTS; i = i + 1) disp_prts_oup_rp[i] = 0;
-        for (integer i = 0; i < 3; i = i + 1) returned_request_accepted[i] = 0;
+        // Defaults values.
+        fs_prts_inp_op = 0;
+        stg_1_rdp_rp = 0;
 
-        // Loop over all the return paths for completed requests.
-        for (integer i = 0; i < 3; i = i + 1) begin
+        // Check if the in flights buffer is full or not.
+        ifr_full = &ifr_up; // Should be a logical and of the entire packed array which would give 1 if all 1s or 0 otherwise.
 
-            // If the return path is attempting to return something & we havent already accepted another path.
-            if (returned_request_present[i] & !return_accepted) begin
+        // If one of the front side ports is trying to submit a memory access request.
+        if (fs_prts_inp_rp != 0) begin
 
-                // set return accepted.
-                return_accepted = 1;
+            // Select a port that wants to submit.
+            for (integer i = 0; i < NUM_PORTS; i = i + 1) begin if (fs_prts_inp_rp) fs_prt_sel = i; end
 
-                // hook up the path to the port it is attempting to return to.
-                disp_prts_oup_req[returned_requests[i].orig] = returned_requests[i];
-                disp_prts_oup_rp[returned_requests[i].orig] = returned_request_present[i];
-                returned_request_accepted[i] = disp_prts_oup_ra[returned_requests[i].orig];
+            // Create read request to L1 stage.
+            stg_1_rdp_req = fs_prts_inp_req[fs_prt_sel].addr;
 
-                // find the position occupied by the request in the in flight requests buffer.
-                for (integer j = 0; j < IFRS_LEN; j = j + 1) begin
-                    // If the entry matches the returning request & the port has accepted it, mark the entry to be cleared.
-                    if (ifr_oup[j] == returned_requests[i].addr && disp_prts_oup_ra[returned_requests[i].orig]) ifr_clrp[j] = 1; 
-                end
-            end
+            // Signal to L1 cache that we have a new request for it.
+            stg_1_rdp_rp = 1;
+
+            // Signal to the port that request is accepted if stage 1 read port is open (open means it can accept input on next posedge).
+            fs_prts_inp_op[fs_prt_sel] = stg_1_rdp_op;
         end
     end
+endmodule
 
-    // This stage should contain a list of all active operations addresses, this way it can block any incoming requests that modify an in flight address.
-    // This stage is also responsible for accepting requests from the ports via a priority decoder.
-    // This stage is also responsible for recieveing successful requests and removing them from the in flight list.
+// Memory access controller L1 cache stage.
+module mem_acc_l1_stage(
+    input clk,
+    input rst,
+
+    // Read port.
+    input logic            rdp_rp,   // Read port request present.
+    input line_read_req    rdp_req,  // Read port request.
+    output logic           rdp_op,   // Read port open.
+
+    // Write port.
+    input logic            wrp_rp,   // Write port request present.
+    input line_write_req   wrp_req,  // Write port request.
+    output logic           wrp_op,   // Write port open.
+
+    // Return channel for completed requests.
+    output logic rd_rpl_p,
+    output line_read_reply rd_rpl,
+    input logic rd_rpl_a
+);
+
+    localparam RD_RQ_Q_LEN = 4;
+    localparam WR_RQ_Q_LEN = 4;
+
+    // Read request queue.
+    line_read_req                   rdrq_q_ar;  // Read request queue active request.   
+    logic [$clog2(RD_RQ_Q_LEN)-1:0] rdrq_q_len; // Read request queue length.
+    logic                           rdrq_q_we;  // Read request queue write enable.
+    logic                           rdrq_q_se;  // Read request queue shift enable.
+    fifo_queue #($bits(line_read_req), RD_RQ_Q_LEN) rdrq_q(clk, rst, rdp_req, rdrq_q_ar, rdrq_q_len, rdrq_q_we, rdrq_q_se);
+
+    // Write request queue.
+    line_write_req                  wrrq_q_ar;  // Write request queue active request.
+    logic [$clog2(WR_RQ_Q_LEN)-1:0] wrrq_q_len; // Write request queue length.
+    logic                           wrrq_q_we;  // Write request queue write enable.
+    logic                           wrrq_q_se;  // Write request queue shift enable.
+    fifo_queue #($bits(line_write_req), WR_RQ_Q_LEN) wrrq_q(clk, rst, wrp_req, wrrq_q_ar, wrrq_q_len, wrrq_q_we, wrrq_q_se);
+
+
 endmodule
 
 // Memory access controller L1 cache stage.

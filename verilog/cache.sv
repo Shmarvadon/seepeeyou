@@ -15,31 +15,323 @@ module cache_sram_block #(parameter LINES = 256, LINE_LENGTH = 256)(
     input clk,
     input rst,
 
-    input [$clog2(LINES)-1:0]   line_sel,
-    input [LINE_LENGTH-1:0]     line_inp,
-    input                       line_we,
-    output [LINE_LENGTH-1:0]    line_oup
+    // Read port.
+    input logic [$clog2(LINES)-1:0]     rdp_line_sel,
+    output logic [LINE_LENGTH-1:0]      rdp_line_dat,
+
+    // Write port.
+    input logic [$clog2(LINES)-1:0]     wrp_line_sel,
+    input logic [LINE_LENGTH-1:0]       wrp_line_inp,
+    output logic [LINE_LENGTH-1:0]      wrp_line_oup,
+    input logic                         wrp_line_we,
 );
     // block of lines, lhs is packed & rhs is not packed.
     bit [LINE_LENGTH-1:0] sram [LINES-1:0];
 
 
-    // Continuous assignment for output.
-    assign line_oup = sram[line_sel];
+    // Continuous assignment for read.
+    assign rdp_line_dat = sram[rdp_line_sel];
 
-    // always block for writing to the line.
+    // Continuous assignment for reading for the write port.
+    assign wrp_line_oup = sram[wrp_line_sel];
+
+    // always block to handle write port.
     always @(posedge clk) begin
-        if (line_we) begin
-            sram[line_sel] <= line_inp;
+        if (wrp_line_we) begin
+            sram[wrp_line_sel] = wrp_line_dat;
 
             // Debug printout.
-            $display("A write is happening on line %d writing: %h", line_sel, line_inp);
+            $display("A write is happening on line %d writing: %h", wrp_line_sel, wrp_line_dat);
         end
     end
 endmodule
 
 // This cache is designed to be fast and respond quickly, also somewhat area efficient I hope (pls dont go above 4 ways).
 module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32)(
+    input clk,
+    input rst,
+
+    // Front side of the cache.
+
+    // Read port.
+    input logic [ADDR_W-1:0]                fs_rdp_addr,    // Front side read port addr.
+    input logic                             fs_rdp_en,      // Front side read port enable.
+    output logic [(LINE_LENGTH * 8) - 1:0]  fs_rdp_dat,     // Front side read port data.
+    output logic                            fs_rdp_done,    // Front side read port done.
+    output logic                            fs_rdp_suc,     // Front side read port successful.
+
+    // Write port.
+    input logic [ADDR_W-1:0]                fs_wrp_addr,    // Front side write port addr.
+    input logic                             fs_wrp_en,      // Front side write port enable.
+    input logic [(LINE_LENGTH * 8) - 1:0]   fs_wrp_dat,     // Front side write port data.
+    output logic                            fs_wrp_done,    // Front side write port done.
+    output logic                            fs_wrp_suc,     // Front side write port successful.
+
+
+    // Back side of the cache.
+
+    output logic [ADDR_W-1:0]               bs_addr,        // Back side address select.
+    output logic [(LINE_LENGTH * 8)-1:0]    bs_dat,         // Back side data output.
+    output logic                            bs_we,          // Back side write enable.
+    input logic                             bs_dn           // Back side done.
+);
+
+    // define a structure to represent a cache line.
+    typedef struct packed { // MSB
+        bit [(LINE_LENGTH * 8)-1:0]                                       dat;      // Data, 128 bits / 16 bytes.
+        bit [(ADDR_W - ($clog2(LINES) + $clog2(LINE_LENGTH)))-1:0]        tag;      // tage 20 its, 31:12
+        bit                                                               dirty;    // dirty bit, indicates if this cache line is pfs_resent in main memory yet or not.
+        bit                                                               valid;    // valid bit indicates if there is any data loaded.
+    } cache_line;           // LSB
+
+
+    //          Generate some SRAM blocks.  
+
+    logic [$clog2(LINES)-1:0]   rdp_set_sel;            // Read port set select.
+    cache_line                  rdp_set  [WAYS-1:0];    // Read port set data.
+    
+    logic [$clog2(LINES)-1:0]   wrp_set_sel;            // Write port set select.
+    cache_line                  wrp_set_rd  [WAYS-1:0]; // Write port set data read.
+    cache_line                  wrp_set_wr  [WAYS-1:0]; // Write port set data write.
+    logic [WAYS-1:0]            wrp_line_we;            // Write port line we.
+
+    generate 
+        for (genar i = 0; i < WAYS; i = i + 1) begin
+            cache_sram_block #(LINES, $bits(cache_line)) way(clk, rst, rdp_set_sel, rdp_set[i], wrp_set_sel, wrp_set_wr[i], wrp_set_rd[i], wrp_line_we[i]);
+        end
+    endgenerate
+
+    // Assign the index bits to drive set sel for read port.
+    assign rdp_set_sel = fs_rdp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)];
+    // Assign the index bits to drive set sel for write port.
+    assign wrp_set_sel = fs_wrp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)];
+
+    // Comb block to handle read requests.
+    always_comb begin
+        // Defaults.
+        fs_rdp_done = 0;
+        fs_rdp_suc = 0;
+        fs_rdp_dat = 0;
+
+        // If readport enable is high.
+        if (fs_rdp_en) begin
+            // Loop over all the lines currently selected by rdp_set_sel.
+            for (integer i = 0; i < WAYS; i = i + 1) begin
+                // If the line has matching tag & is valid.
+                if (rdp_set[i].tag == fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))] && rdp_set[i].valid) begin
+                    // Present data to output and signal done & success.
+                    fs_rdp_dat = rdp_set[i].dat;
+
+                    fs_rdp_done = 1;
+                    fs_rdp_suc = 1;
+
+                    // Debug printout.
+                    $display("Found cache line mapping to tag %h in way %d set %d", fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], i, fs_rdp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
+                end
+            end
+
+            // If not able to find the line in this cache.
+            if (!fs_rdp_done) begin
+                // Signal that we are done but not able to find the line.
+                fs_rdp_done = 1;
+                fs_rdp_suc = 0;
+
+                // Debug printout.
+                $display("L1 cahche");
+                $display("Unable to find cache line with tag %h in set %d", fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], fs_rdp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
+            end
+        end
+    end
+
+    // Comb block to handle write requests.
+    bit [3:0] write_state;
+    bit [$clog2(WAYS)-1:0] rres;    // Round robin eviction select.
+    always_comb begin
+        // Defaults.
+        fs_wrp_suc = 0;
+        fs_wrp_done = 0;
+        wrp_line_we = 0;
+
+        // If write port enable is high.
+        if (fs_wrp_en) begin
+
+            // Different behaviours for different write states.
+            case (write_state)
+
+            // Case for writing to a line we already have.
+            0:
+            begin
+                // Debug printout.
+                $display("Attempting to modify if present already. %t", $time);
+
+                // Loop over the lines to look for an existing line matching tag bits.
+                for (integer i = 0; i < WAYS; i = i + 1) begin
+                    // If the tag bits match and it is valid.
+                    if (wrp_set_rd[i].tag == fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))] && wrp_set_rd[i].valid && !fs_wrp_done) begin
+                        // Set write enable for this line high.
+                        wrp_line_we[i] = 1;
+
+                        // Present data to be written.
+                        wrp_set_wrp[i] = fs_wrp_dat;
+
+                        // Signal success.
+                        fs_wrp_suc = 1;
+                        fs_wrp_done = 1;
+
+                        // Debug printout.
+                        $display("Found a line to modify write to with tag %h at way %d set %d", fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], i, fs_wrp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
+                    end
+                end
+            end
+
+            // Case for writing a new line.
+            1:
+            begin
+                // Debug printout.
+                $display("Writing a new line to cache. %t", $time);
+
+                // Loop over the lines in the selected set and look for an empty line.
+                for (integer i = 0; i < WAYS; i = i + 1) begin
+                    // If the valid bit is not set & we are not done.
+                    if (!wrp_set_re[i].valid && !fs_wrp_done) begin 
+                        // Setup input to the line.
+                        wrp_set_wr[i].dat = fs_wrp_dat;
+                        wrp_set_wr[i].valid = 1;
+                        wrp_set_wr[i].dirty = 1;
+                        wrp_set_wr[i].tag = fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))];
+
+                        // Set write enable high.
+                        wrp_line_we[i] = 1;
+
+                        // Signal success and done.
+                        fs_wrp_done = 1;
+                        fs_wrp_suc = 1;
+
+                        // Debug printout.
+                        $display("Found an empty line to write data to, tag %h at way %d set %d", fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], i, fs_wrp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
+                    end
+                end
+
+                // If for some reason this is not done (idk how that would happen NGL).
+                if (!fs_wrp_done) begin
+                    // mark as done but not successful, wrapper module can just forward the write to the next cache level.
+                    fs_wrp_done = 1;
+                    fs_wrp_suc = 0;
+                end
+            end
+
+            // Case for evicting a line to next level of cache.
+            2:
+            begin
+                // Present the line for eviction to the back side.
+                bs_addr = {wrp_set_rd[rres].tag, wrp_set_sel, 0};
+                bs_dat = wrp_set_rd[rres].dat;
+                bs_we = 1;
+
+                // If the backside is signalling that it will accept the write on the next clock cycle.
+                if (bs_dn) begin
+                    // Setup the line to be overwritten.
+                    wrp_set_wr[rres].tag = fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))];
+                    wrp_set_wr[rres].dat = fs_wrp_dat;
+                    wrp_set_wr[rres].valid = 1;
+                    wrp_set_wr[rres].dirty = 1;
+
+                    // Signal for it to be overwritten.
+                    wrp_line_we[rres] = 1;
+
+                    // Signal success.
+                    fs_wrp_done = 1;
+                    fs_wrp_suc = 1;
+                end
+            end
+
+            // Super secret write state for when eviction takes too long.
+            3:
+            begin
+                // Hold done high and success low untill the fs_wrp_en goes low or something.
+                fs_wrp_done = 1;
+                fs_wrp_suc = 0;
+            end
+            endcase
+        end
+    end
+
+    // always block to handle transitioning write_state for the write bit.
+    bit set_full;
+    bit [7:0] tmout_tmr;
+    always @(posedge clk) begin
+        // Default value.
+        set_full = 1;
+        // If the write port is active.
+        if (fs_wrp_en) begin
+            // Check which state we are in currently.
+            case (write_state)
+            // Case for modifying an existing line.
+            0:
+            begin
+                // If not a success.
+                if (!fs_wrp_done) begin
+                    // Check if the set is full or not.
+                    for (integer i = 0; i < WAYS; i = i + 1) begin if (!wrp_set_rd[i].valid) set_full = 0; end
+
+                    // If the set is full then transition to evict a line next clock.
+                    if (set_full) begin
+                        write_state = 2;    // Move write state to the "evict a line" state.
+                        tmout_tmr = 0;      // Reset the timeout timer.
+                    end
+                    // If the set is not full, then just write a new line to it.
+                    else begin
+                        write_state = 1;    // Move write state to the "write a new line" state.
+                    end
+                end
+            end
+
+            // Case for writing a new line.
+            1:
+            begin
+                // If done.
+                if (fs_wrp_done) begin
+                    // Transition write state back to 0.
+                    write_state = 0;
+                end
+            end
+
+            // Case for evicting a line.
+            2:
+            begin
+                // If done.
+                if (fs_wrp_done) begin
+                    // Transition write state back to 0.
+                    write_state = 0;
+
+                    // Incriment the round robin eviction select bits.
+                    if (rres < WAYS) rres = rres + 1;
+                    else rres = 0;
+                end
+                // If not done.
+                else begin
+                    // Incriment the timeout timer.
+                    tmout_tmr = tmout_tmr + 1;
+
+                    // If the timeout timer reaches the end.
+                    if (tmout_tmr >= 255) begin
+                        write_state = 3;        // Move to write state 3 where we can just sit and wait for fs_wrp_en to be deasserted.
+                    end
+                end
+            end
+            endcase
+
+        end
+        // If the write port is not active.
+        else begin
+            write_state = 0;
+        end
+    end
+
+endmodule
+
+// This cache is designed to be fast and respond quickly, also somewhat area efficient I hope (pls dont go above 4 ways).
+module l1_cache_old #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32)(
     input clk,
     input rst,
 
