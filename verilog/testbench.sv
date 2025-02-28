@@ -6,90 +6,80 @@
 //`include "nocstop.sv"
 `include "core_memory_access_controller.sv"
 
-
+// Test bench for L1 stage of mem acc controller.
 module tb;
 
 bit clk;
-bit rst;
-mac_stage_intf test_interface();
-noc_ip_port noc_prt();                  // ADD SOME LOGIC HERE TO ACCEPT PACKETS AND REFLECT THEM AFTER N CYCLES.
+bit rst = 0;
+
+    // Read port.
+    logic            inp_rdp_rp;   // Read port request present.
+    line_read_req    inp_rdp_req;  // Read port request.
+    logic           inp_rdp_op;   // Read port open.
+
+    // Write port.
+    logic            inp_wrp_rp;   // Write port request present.
+    line_write_req   inp_wrp_req;  // Write port request.
+    logic           inp_wrp_op;   // Write port open.
+
+    // Outputs from this stage.
+
+    // Read port.
+    logic            oup_rdp_rp;   // Read port request present.
+    line_read_req    oup_rdp_req;  // Read port request.
+    logic             oup_rdp_op;   // Read port open.
+
+    // Write port.
+    logic            oup_wrp_rp;   // Write port request present.
+    line_write_req   oup_wrp_req;  // Write port request.
+    logic             oup_wrp_op;   // Write port open.
+
+    // Return channel for completed requests.
+    logic rd_rpl_p;
+    line_read_reply rd_rpl;
+    logic rd_rpl_a;
+
+    mem_acc_l1_stage l1_stg(clk, rst, inp_rdp_rp, inp_rdp_req, inp_rdp_op, inp_wrp_rp,
+    inp_wrp_req, inp_wrp_op, oup_rdp_rp, oup_rdp_req, oup_rdp_op, oup_wrp_rp,
+    oup_wrp_req, oup_wrp_op, rd_rpl_p, rd_rpl, rd_rpl_a
+);
+
 
 initial begin
-    test_interface.oup_ra = 1;
-end
+    rd_rpl_a = 1;
+    // Present a write request to address 12345.
+    inp_wrp_req.addr = 12345;
+    inp_wrp_req.dat = 420;
+    inp_wrp_rp = 1;
 
+    // Should take 1 cycles to be accepted.
+    #20
 
-memory_access_controller mac(clk, rst, test_interface.drive_input, noc_prt);
-
-
-initial begin
-    // Create a memory access request to write a line to cache.
-    test_interface.inp_rp = 1;
-    test_interface.inp_req.addr = 32'h0012014a;
-    test_interface.inp_req.dat = 42069;
-    test_interface.inp_req.orig = 0;
-    test_interface.inp_req.rqt = 1;
-    test_interface.inp_req.rsuc = 0;
-
-    # 20
-
-    // Read from the addr just written to.
-    test_interface.inp_rp = 1;
-    test_interface.inp_req.rqt = 0;
+    // Stop the write from reoccuring.
+    inp_wrp_rp = 0;
 
     #20
 
-    // Read from somewhere that isnt in cache yet.
-    test_interface.inp_rp = 1;
-    test_interface.inp_req.addr = 32'h0101a4f8;
+    // Present a read request to the cache at 12345.
+    inp_rdp_req.addr = 12345;
+    inp_rdp_rp = 1;
 
+    // Wait a cycle then disable the read port.
     #20
+    inp_rdp_rp = 0;
 
-    test_interface.inp_rp = 0;
+    #40
+
+    // Try to do a simultaneous read + write to 2 different addresses.
+    inp_wrp_req.addr = 42069;
+    inp_wrp_req.dat = 256;
+    inp_wrp_rp = 1;
+
+    inp_rdp_req.addr = 12345;
+    inp_rdp_rp = 1;
+
+
 end
-
-always @(posedge clk) begin
-    // If there is a request to the NOC from the mac.
-    if (noc_prt.tx_av) begin
-        // Move the request to the rx bit of the port.
-        noc_prt.rx_dat.hdr.src_addr = noc_prt.tx_dat.hdr.dst_addr;
-        noc_prt.rx_dat.hdr.src_port = noc_prt.tx_dat.hdr.dst_port;
-
-        noc_prt.rx_dat.hdr.dst_addr = noc_prt.tx_dat.hdr.src_addr;
-        noc_prt.rx_dat.hdr.dst_port = noc_prt.tx_dat.hdr.src_port;
-
-        noc_prt.rx_dat.hdr.len = noc_prt.tx_dat.hdr.len;
-
-        noc_prt.rx_dat.dat = noc_prt.tx_dat.dat;
-        noc_prt.rx_dat.dat[0] = 1;
-
-        $display("Recieved request to NOC, pinging it back in a few cycles.");
-
-        // Signal that we have accepted it.
-
-        noc_prt.tx_re = 1;
-
-        // Wait a cycle.
-        # 20;
-
-        // Stop signalling that we accepted it.
-        noc_prt.tx_re = 0;
-
-        // Wait a bunch of cycles.
-        #60;
-
-        $display("Request being pinged back now.");
-
-        // Signal that a reply is ready.
-        noc_prt.rx_av = 1;
-
-        // Wait a cycle.
-        #20;
-
-        noc_prt.rx_av = 0;
-    end
-end
-
 
 always begin
     #10 clk = ~clk;
@@ -101,6 +91,78 @@ end
 
 endmodule
 
+/*
+// Validating new L1 cache.
+module tb;
+
+bit clk;
+bit rst = 0;
+
+// Instantiate an L1 cache block.
+logic [31:0]    cache_rdp_addr;
+logic           cache_rdp_en;
+logic [127:0]   cache_rdp_dat;
+logic           cache_rdp_done;
+logic           cache_rdp_suc;
+
+logic [31:0]    cache_wrp_addr;
+logic           cache_wrp_en;
+logic [127:0]   cache_wrp_dat;
+logic           cache_wrp_done;
+logic           cache_wrp_suc;
+
+logic [31:0]    cache_bs_addr;
+logic [127:0]   cache_bs_dat;
+logic           cache_bs_en;
+logic           cache_bs_done;
+
+l1_cache #(4, 256, 16, 32) l1(clk, rst, cache_rdp_addr, cache_rdp_en, cache_rdp_dat, cache_rdp_done, cache_rdp_suc,
+                                cache_wrp_addr, cache_wrp_en, cache_wrp_dat, cache_wrp_done, cache_wrp_suc,
+                                cache_bs_adr, cache_bs_dat, cache_bs_en, cache_bs_done);
+
+initial begin
+    // Present a write request to address 12345.
+    cache_wrp_addr = 12345;
+    cache_wrp_dat = 420;
+    cache_wrp_en = 1;
+
+    // Should take 2 cycles to complete.
+    #40
+
+    // Stop the write from reoccuring.
+    cache_wrp_en = 0;
+
+    // Present a read request to the cache at 12345.
+    cache_rdp_addr = 12345;
+    cache_rdp_en = 1;
+
+    // Wait a cycle then disable the read port.
+    #20
+    cache_rdp_en = 0;
+
+    #40
+
+    // Try to do a simultaneous read + write to 2 different addresses.
+    cache_wrp_addr = 42069;
+    cache_wrp_dat = 256;
+    cache_wrp_en = 1;
+
+    cache_rdp_addr = 12345;
+    cache_rdp_en = 1;
+
+
+end
+
+always begin
+    #10 clk = ~clk;
+end
+
+always @(posedge clk) begin
+    $display("Clock! %t", $time);
+end
+
+endmodule
+*/
 
 /*
 module tb;

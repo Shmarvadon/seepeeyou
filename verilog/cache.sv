@@ -8,9 +8,10 @@
     - on read L1 just reads, L2 will read and evict the line in the same go.
     - On write L1 will write and evict if needed (same as l2).
     - L1 will check the entire set in 1 clock cycle, L2 will take multiple cycles depending on set size.
+    - L2 uses unified line RAM & tag ram but L2 will have seperate so that it can miss quicker if a miss occures.
 */
 
-// Really dumb SRAM that enables us to access a line at a time.
+// Really dumb SRAM that enables us to access 2 lines at a time.
 module cache_sram_block #(parameter LINES = 256, LINE_LENGTH = 256)(
     input clk,
     input rst,
@@ -23,7 +24,7 @@ module cache_sram_block #(parameter LINES = 256, LINE_LENGTH = 256)(
     input logic [$clog2(LINES)-1:0]     wrp_line_sel,
     input logic [LINE_LENGTH-1:0]       wrp_line_inp,
     output logic [LINE_LENGTH-1:0]      wrp_line_oup,
-    input logic                         wrp_line_we,
+    input logic                         wrp_line_we
 );
     // block of lines, lhs is packed & rhs is not packed.
     bit [LINE_LENGTH-1:0] sram [LINES-1:0];
@@ -38,10 +39,10 @@ module cache_sram_block #(parameter LINES = 256, LINE_LENGTH = 256)(
     // always block to handle write port.
     always @(posedge clk) begin
         if (wrp_line_we) begin
-            sram[wrp_line_sel] = wrp_line_dat;
+            sram[wrp_line_sel] = wrp_line_inp;
 
             // Debug printout.
-            $display("A write is happening on line %d writing: %h", wrp_line_sel, wrp_line_dat);
+            $display("A write is happening on line %d writing: %h", wrp_line_sel, wrp_line_inp);
         end
     end
 endmodule
@@ -96,7 +97,7 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
     logic [WAYS-1:0]            wrp_line_we;            // Write port line we.
 
     generate 
-        for (genar i = 0; i < WAYS; i = i + 1) begin
+        for (genvar i = 0; i < WAYS; i = i + 1) begin
             cache_sram_block #(LINES, $bits(cache_line)) way(clk, rst, rdp_set_sel, rdp_set[i], wrp_set_sel, wrp_set_wr[i], wrp_set_rd[i], wrp_line_we[i]);
         end
     endgenerate
@@ -115,6 +116,10 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
 
         // If readport enable is high.
         if (fs_rdp_en) begin
+
+            // Debug printout.
+            $display("Attempting to read a line from cache.");
+
             // Loop over all the lines currently selected by rdp_set_sel.
             for (integer i = 0; i < WAYS; i = i + 1) begin
                 // If the line has matching tag & is valid.
@@ -172,7 +177,10 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
                         wrp_line_we[i] = 1;
 
                         // Present data to be written.
-                        wrp_set_wrp[i] = fs_wrp_dat;
+                        wrp_set_wr[i].dat = fs_wrp_dat;
+                        wrp_set_wr[i].valid = 1;
+                        wrp_set_wr[i].dirty = 1;
+                        wrp_set_wr[i].tag = fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))];
 
                         // Signal success.
                         fs_wrp_suc = 1;
@@ -193,7 +201,7 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
                 // Loop over the lines in the selected set and look for an empty line.
                 for (integer i = 0; i < WAYS; i = i + 1) begin
                     // If the valid bit is not set & we are not done.
-                    if (!wrp_set_re[i].valid && !fs_wrp_done) begin 
+                    if (!wrp_set_rd[i].valid && !fs_wrp_done) begin 
                         // Setup input to the line.
                         wrp_set_wr[i].dat = fs_wrp_dat;
                         wrp_set_wr[i].valid = 1;
@@ -329,7 +337,7 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
     end
 
 endmodule
-
+/*
 // This cache is designed to be fast and respond quickly, also somewhat area efficient I hope (pls dont go above 4 ways).
 module l1_cache_old #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32)(
     input clk,
@@ -589,10 +597,173 @@ module l1_cache_old #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W 
         end
     end
 endmodule
-
+*/
 
 // This cache is designed to be somewhat fast but much higher capcity and very area efficient (targeting 8-16 ways).
-module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32, LINES_PER_CLK = 4)(
+module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32)(
+    input clk,
+    input rst,
+
+    // Front side of the cache.
+
+    // Read port.
+    input logic [ADDR_W-1:0]                fs_rdp_addr,    // Front side read port addr.
+    input logic                             fs_rdp_en,      // Front side read port enable.
+    output logic [(LINE_LENGTH * 8) - 1:0]  fs_rdp_dat,     // Front side read port data.
+    output logic                            fs_rdp_done,    // Front side read port done.
+    output logic                            fs_rdp_suc,     // Front side read port successful.
+
+    // Write port.
+    input logic [ADDR_W-1:0]                fs_wrp_addr,    // Front side write port addr.
+    input logic                             fs_wrp_en,      // Front side write port enable.
+    input logic [(LINE_LENGTH * 8) - 1:0]   fs_wrp_dat,     // Front side write port data.
+    output logic                            fs_wrp_done,    // Front side write port done.
+    output logic                            fs_wrp_suc,     // Front side write port successful.
+
+
+    // Back side of the cache.
+
+    output logic [ADDR_W-1:0]               bs_addr,        // Back side address select.
+    output logic [(LINE_LENGTH * 8)-1:0]    bs_dat,         // Back side data output.
+    output logic                            bs_we,          // Back side write enable.
+    input logic                             bs_dn           // Back side done.
+);
+
+    ///         Setup a bunch of tag RAM            
+
+    // define the tag ram line structure.
+    typedef struct packed { // MSB
+        bit [(ADDR_W - ($clog2(LINES) + $clog2(LINE_LENGTH)))-1:0]        tag;      // tage 20 its, 31:12
+        bit                                                               dirty;    // dirty bit, indicates if the cache line is pfs_resent in main memory yet or not.
+        bit                                                               valid;    // valid bit indicates if there is any data loaded.
+    } tag_ram_line;         // LSB
+
+    // Generate the SRAM blocks for the tag RAM.
+    logic [$clog2(LINES)-1:0]   tr_rdp_set_sel;             // Tag ram read port set select.
+    tag_ram_line                tr_rdp_set [WAYS-1:0];      // Tag ram read port set data.
+
+    logic [$clog2(LINES)-1:0]   tr_wrp_set_sel;             // Tag ram write port set select.
+    tag_ram_line                tr_wrp_set_rd [WAYS-1:0];   // Tag ram write port set data read.
+    tag_ram_line                tr_wrp_set_wr [WAYS-1:0];   // Tag ram write port set data write.
+    logic [WAYS-1:0]            tr_wrp_line_we;             // Tag ram write port line we.
+
+    generate 
+        for (genvar i = 0; i < WAYS; i = i + 1) begin
+            cache_sram_block #(LINES, $bits(tag_ram_line)) tag_ram_way(clk, rst, tr_rdp_set_sel, tr_rdp_set[i], tr_wrp_set_sel, tr_wrp_set_wr[i], tr_wrp_set_rd[i], tr_wrp_line_we[i]);
+        end    
+    endgenerate
+
+    // Assign the index bits to drive set sel for read port.
+    assign tr_rdp_set_sel = fs_rdp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)];
+    // Assign the index bits to drive set sel for write port.
+    assign tr_wrp_set_sel = fs_wrp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)];
+
+
+    //          Setup a bunch of SRAM for the lines.
+
+    // Generate a bunch of SRAM banks, 1 for each way.
+    logic [$clog2(LINES)-1:0]           rdp_set_sel;            // Read port set select.
+    logic [(LINE_LENGTH * 8) - 1 : 0]   rdp_set  [WAYS-1:0];    // Read port set data.
+    
+    logic [$clog2(LINES)-1:0]           wrp_set_sel;            // Write port set select.
+    logic [(LINE_LENGTH * 8) - 1 : 0]   wrp_set_rd  [WAYS-1:0]; // Write port set data read.
+    logic [(LINE_LENGTH * 8) - 1 : 0]   wrp_set_wr  [WAYS-1:0]; // Write port set data write.
+    logic [WAYS-1:0]                    wrp_line_we;            // Write port line we.
+
+    generate 
+        for (genvar i = 0; i < WAYS; i = i + 1) begin
+            cache_sram_block #(LINES, LINE_LENGTH * 8) way(clk, rst, rdp_set_sel, rdp_set[i], wrp_set_sel, wrp_set_wr[i], wrp_set_rd[i], wrp_line_we[i]);
+        end
+    endgenerate
+
+    // Assign the index bits to drive set sel for read port.
+    assign rdp_set_sel = fs_rdp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)];
+    // Assign the index bits to drive set sel for write port.
+    assign wrp_set_sel = fs_wrp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)];
+
+
+    //          Logic to handle processing the read and write requests.
+
+    // Comb block to handle read requests.
+    bit [1:0] read_state;
+    bit [$clog2(WAYS)-1:0] read_way_sel;
+    always_comb begin
+        // Default values.
+        fs_rdp_done = 0;
+        fs_rdp_suc = 0;
+
+        // Loop over the tag lines to check if we have the line.
+        for (integer i = 0; i < WAYS; i = i + 1) begin
+            // If the tag bits match & the line is valid.
+            if (tr_rdp_set[i].addr == fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))] && tr_rdp_set[i].valid) begin
+                // Signal that we have the cache line.
+                fs_rdp_suc = 1;
+                // Store the index in the read_way_sel so that it can be used to read out the data.
+                read_way_sel = i;
+            end
+        end
+
+        // If the read port is enabled.
+        if (fs_rdp_en) begin
+            // Do different things based on the state of the read state machine.
+            case (read_state) 
+            
+            // If we are at the checking tag ram stage of the state machine.
+            0:
+            begin
+
+                // If fs_rdp_suc == 0 then we dont have the line.
+                if (!fs_rdp_suc) begin
+                    fs_rdp_done = 1;    // Signal that we are done but dont have the line.
+                end
+            end
+
+            // If we have found the tag for the line in tag RAM.
+            1:
+            begin
+                // Signal done to the front side read port.
+                fs_rdp_done = 1;
+
+                // Present data to the readport.
+                fs_rdp_dat = rdp_set[read_way_sel];
+
+                // Signal to the tag ram that we need to invalidate the line.
+            end
+            endcase
+        end
+        // If the read port is not enabled.
+        else begin
+        end
+    end
+
+    always @(posedge clk) begin
+
+        // If the read port is enabled.
+        if (fs_rdp_en) begin
+            // Different behaviour depending on stage of the read.
+            case (read_state)
+            // If we are currently checking tags.
+            0:
+            begin
+                // If we do poses the cache line, transition to read state where we read the data from the line ram.
+                if (fs_rdp_suc) begin
+                    read_state = 1;
+                end
+            end
+            endcase
+        end
+        // If the read port is not enabled.
+        else begin
+            // Reset read state to 0.
+            read_state = 0;
+        end
+    end
+
+endmodule
+
+/*
+// This cache is designed to be somewhat fast but much higher capcity and very area efficient (targeting 8-16 ways).
+module l2_cache_old #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32, LINES_PER_CLK = 4)(
     input clk,
     input rst,
 
@@ -933,3 +1104,4 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
     end
 
 endmodule
+*/

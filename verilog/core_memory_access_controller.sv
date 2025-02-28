@@ -10,7 +10,7 @@ typedef struct packed {
     logic [127:0]   dat;    // Request data.
     logic [15:0]    wmsk;   // Request write mask.
     logic           rqt;    // Request type (0 = read, 1 = write).
-    logic [3:0]     prt:    // Request origin port.
+    logic [3:0]     prt;    // Request origin port.
 } line_acc_req;
 
 // Struct to pass a line read request.
@@ -43,7 +43,7 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
 
     // Request reply.
     output logic [NUM_PORTS]         fs_prts_oup_rp,     // Front end ports output request present.
-    output line_acc_req              fs_prts_oup_req,    // Front end ports output request.
+    output line_acc_req [NUM_PORTS]  fs_prts_oup_req,    // Front end ports output request.
     input logic [NUM_PORTS]          fs_prts_oup_op,     // Front end ports output open.
 
 
@@ -188,15 +188,29 @@ module mem_acc_l1_stage(
     input clk,
     input rst,
 
+    // Inputs to this stage.
+
     // Read port.
-    input logic            rdp_rp,   // Read port request present.
-    input line_read_req    rdp_req,  // Read port request.
-    output logic           rdp_op,   // Read port open.
+    input logic            inp_rdp_rp,   // Read port request present.
+    input line_read_req    inp_rdp_req,  // Read port request.
+    output logic           inp_rdp_op,   // Read port open.
 
     // Write port.
-    input logic            wrp_rp,   // Write port request present.
-    input line_write_req   wrp_req,  // Write port request.
-    output logic           wrp_op,   // Write port open.
+    input logic            inp_wrp_rp,   // Write port request present.
+    input line_write_req   inp_wrp_req,  // Write port request.
+    output logic           inp_wrp_op,   // Write port open.
+
+    // Outputs from this stage.
+
+    // Read port.
+    output logic            oup_rdp_rp,   // Read port request present.
+    output line_read_req    oup_rdp_req,  // Read port request.
+    input logic             oup_rdp_op,   // Read port open.
+
+    // Write port.
+    output logic            oup_wrp_rp,   // Write port request present.
+    output line_write_req   oup_wrp_req,  // Write port request.
+    input logic             oup_wrp_op,   // Write port open.
 
     // Return channel for completed requests.
     output logic rd_rpl_p,
@@ -212,18 +226,122 @@ module mem_acc_l1_stage(
     logic [$clog2(RD_RQ_Q_LEN)-1:0] rdrq_q_len; // Read request queue length.
     logic                           rdrq_q_we;  // Read request queue write enable.
     logic                           rdrq_q_se;  // Read request queue shift enable.
-    fifo_queue #($bits(line_read_req), RD_RQ_Q_LEN) rdrq_q(clk, rst, rdp_req, rdrq_q_ar, rdrq_q_len, rdrq_q_we, rdrq_q_se);
+    fifo_queue #($bits(line_read_req), RD_RQ_Q_LEN) rdrq_q(clk, rst, inp_rdp_req, rdrq_q_ar, rdrq_q_len, rdrq_q_we, rdrq_q_se);
+
+    // If we have room for another request in the queue then we accept it.
+    assign inp_rdp_op = rdrq_q_len < RD_RQ_Q_LEN ? 1 : 0;
+    // If we have room & the prev stage wants to input a request to queue, accept it.
+    assign rdrq_q_we = inp_rdp_op && inp_rdp_rp; 
 
     // Write request queue.
     line_write_req                  wrrq_q_ar;  // Write request queue active request.
     logic [$clog2(WR_RQ_Q_LEN)-1:0] wrrq_q_len; // Write request queue length.
     logic                           wrrq_q_we;  // Write request queue write enable.
     logic                           wrrq_q_se;  // Write request queue shift enable.
-    fifo_queue #($bits(line_write_req), WR_RQ_Q_LEN) wrrq_q(clk, rst, wrp_req, wrrq_q_ar, wrrq_q_len, wrrq_q_we, wrrq_q_se);
+    fifo_queue #($bits(line_write_req), WR_RQ_Q_LEN) wrrq_q(clk, rst, inp_wrp_req, wrrq_q_ar, wrrq_q_len, wrrq_q_we, wrrq_q_se);
+
+    // If we have room for another request in the queue then we accept it.
+    assign inp_wrp_op = wrrq_q_len < WR_RQ_Q_LEN ? 1 : 0;
+    // If we have room & the prev stage wants to input a request to queue, accept it.
+    assign wrrq_q_we = inp_wrp_op && inp_wrp_rp;
+
+    // Instantiate an L1 cache block.
+    logic [31:0]    cache_rdp_addr;
+    logic           cache_rdp_en;
+    logic [127:0]   cache_rdp_dat;
+    logic           cache_rdp_done;
+    logic           cache_rdp_suc;
+
+    logic [31:0]    cache_wrp_addr;
+    logic           cache_wrp_en;
+    logic [127:0]   cache_wrp_dat;
+    logic           cache_wrp_done;
+    logic           cache_wrp_suc;
+
+    logic [31:0]    cache_bs_addr;
+    logic [127:0]   cache_bs_dat;
+    logic           cache_bs_en;
+    logic           cache_bs_done;
+
+    l1_cache #(4, 256, 16, 32) l1(clk, rst, cache_rdp_addr, cache_rdp_en, cache_rdp_dat, cache_rdp_done, cache_rdp_suc,
+                                  cache_wrp_addr, cache_wrp_en, cache_wrp_dat, cache_wrp_done, cache_wrp_suc,
+                                  cache_bs_adr, cache_bs_dat, cache_bs_en, cache_bs_done);
 
 
+    // Comb block to handle dispatching write & read requests.
+    always_comb begin
+        // Default values.
+        cache_rdp_en = 0;
+        cache_wrp_en = 0;
+        wrrq_q_se = 0;
+        rdrq_q_se = 0;
+
+        // If there is a write request present in the queue.
+        if (wrrq_q_len != 0) begin
+            // Enable the write port on the cache and present the request.
+            cache_wrp_en = 1;
+            cache_wrp_dat = wrrq_q_ar.dat;
+            cache_wrp_addr = wrrq_q_ar.addr;
+
+            // If the backside of the cache wants to evict a line.
+            if (cache_bs_en) begin
+                // Signal to the write port of the next stage that we have a write request for it.
+                oup_wrp_req.dat = cache_bs_dat;
+                oup_wrp_req.addr = cache_bs_addr;
+                oup_wrp_rp = 1;
+
+                // If the next stage' write port will accept the request then we signal back end done.
+                cache_bs_done = oup_wrp_op;
+            end
+
+            // If the cache is done.
+            if (cache_wrp_done) begin
+                // If the operation was a success.
+                if (cache_wrp_suc) begin
+                    wrrq_q_se = 1;  // Shift to the next request.
+                end
+
+                // If the operation was not a success.
+                else begin
+                    // Add something here to either pass the request along or throw a hardware error or something.
+                end
+            end
+        end
+
+        // If there is a read request present in the queue.
+        if (rdrq_q_len != 0) begin
+            // Enable the read port on the cache and present the request.
+            cache_rdp_en = 1;
+            cache_rdp_addr = rdrq_q_ar.addr;
+
+            // If the cache is done.
+            if (cache_rdp_done) begin
+                // If the operation was a success.
+                if (cache_rdp_suc) begin
+                    // Present the data to the return path and wait for it to be accepted.
+                    rd_rpl.dat = cache_rdp_dat;
+                    rd_rpl.addr = rdrq_q_ar.addr;
+                    rd_rpl_p = 1;
+
+                    // Shift the request out of the queue once its return is accepted.
+                    rdrq_q_se = rd_rpl_a;
+                end
+
+                // If the operation was not a success, forward it to the next stage.
+                else begin
+                    // Present the request to the other stage and wait for it to accept it.
+                    oup_rdp_req = rdrq_q_ar;
+                    oup_rdp_rp = 1;
+                    
+                    // If the next stage will accept the request next clock cycle then we can shift it out then too.
+                    rdrq_q_se = oup_rdp_op;
+                end
+            end
+        end
+    end
 endmodule
 
+/*
 // Memory access controller L1 cache stage.
 module mac_l1_stage(
     input clk,
@@ -399,7 +517,166 @@ module mac_l1_stage(
 
     // Handle back side of the cache.
 endmodule
+*/
 
+// Memory access controller L2 cache stage.
+module mem_acc_l2_stage(
+    input clk,
+    input rst,
+
+    // Inputs to this stage.
+
+    // Read port.
+    input logic            inp_rdp_rp,   // Read port request present.
+    input line_read_req    inp_rdp_req,  // Read port request.
+    output logic           inp_rdp_op,   // Read port open.
+
+    // Write port.
+    input logic            inp_wrp_rp,   // Write port request present.
+    input line_write_req   inp_wrp_req,  // Write port request.
+    output logic           inp_wrp_op,   // Write port open.
+
+    // Outputs from this stage.
+
+    // Read port.
+    output logic            oup_rdp_rp,   // Read port request present.
+    output line_read_req    oup_rdp_req,  // Read port request.
+    input logic             oup_rdp_op,   // Read port open.
+
+    // Write port.
+    output logic            oup_wrp_rp,   // Write port request present.
+    output line_write_req   oup_wrp_req,  // Write port request.
+    input logic             oup_wrp_op,   // Write port open.
+
+    // Return channel for completed requests.
+    output logic rd_rpl_p,
+    output line_read_reply rd_rpl,
+    input logic rd_rpl_a
+);
+
+    localparam RD_RQ_Q_LEN = 4;
+    localparam WR_RQ_Q_LEN = 4;
+
+    // Read request queue.
+    line_read_req                   rdrq_q_ar;  // Read request queue active request.   
+    logic [$clog2(RD_RQ_Q_LEN)-1:0] rdrq_q_len; // Read request queue length.
+    logic                           rdrq_q_we;  // Read request queue write enable.
+    logic                           rdrq_q_se;  // Read request queue shift enable.
+    fifo_queue #($bits(line_read_req), RD_RQ_Q_LEN) rdrq_q(clk, rst, inp_rdp_req, rdrq_q_ar, rdrq_q_len, rdrq_q_we, rdrq_q_se);
+
+    // If we have room for another request in the queue then we accept it.
+    assign inp_rdp_op = rdrq_q_len < RD_RQ_Q_LEN ? 1 : 0;
+    // If we have room & the prev stage wants to input a request to queue, accept it.
+    assign rdrq_q_we = inp_rdp_op && inp_rdp_rp; 
+
+    // Write request queue.
+    line_write_req                  wrrq_q_ar;  // Write request queue active request.
+    logic [$clog2(WR_RQ_Q_LEN)-1:0] wrrq_q_len; // Write request queue length.
+    logic                           wrrq_q_we;  // Write request queue write enable.
+    logic                           wrrq_q_se;  // Write request queue shift enable.
+    fifo_queue #($bits(line_write_req), WR_RQ_Q_LEN) wrrq_q(clk, rst, inp_wrp_req, wrrq_q_ar, wrrq_q_len, wrrq_q_we, wrrq_q_se);
+
+    // If we have room for another request in the queue then we accept it.
+    assign inp_wrp_op = wrrq_q_len < WR_RQ_Q_LEN ? 1 : 0;
+    // If we have room & the prev stage wants to input a request to queue, accept it.
+    assign wrrq_q_we = inp_wrp_op && inp_wrp_rp;
+
+    // Instantiate an L2 cache block.
+    logic [31:0]    cache_rdp_addr;
+    logic           cache_rdp_en;
+    logic [127:0]   cache_rdp_dat;
+    logic           cache_rdp_done;
+    logic           cache_rdp_suc;
+
+    logic [31:0]    cache_wrp_addr;
+    logic           cache_wrp_en;
+    logic [127:0]   cache_wrp_dat;
+    logic           cache_wrp_done;
+    logic           cache_wrp_suc;
+
+    logic [31:0]    cache_bs_addr;
+    logic [127:0]   cache_bs_dat;
+    logic           cache_bs_en;
+    logic           cache_bs_done;
+
+    l2_cache #(8, 256, 16, 32) l1(cache_rdp_addr, cache_rdp_en, cache_rdp_dat, cache_rdp_done, cache_rdp_suc,
+                                  cache_wrp_addr, cache_wrp_en, cache_wrp_dat, cache_wrp_done, cache_wrp_suc,
+                                  cache_bs_adr, cache_bs_dat, cache_bs_en, cache_bs_done);
+
+
+    // Comb block to handle dispatching write & read requests.
+    always_comb begin
+        // Default values.
+        cache_rdp_en = 0;
+        cache_wrp_en = 0;
+        wrrq_q_se = 0;
+        rdrq_q_se = 0;
+
+        // If there is a write request present in the queue.
+        if (wrrq_q_len != 0) begin
+            // Enable the write port on the cache and present the request.
+            cache_wrp_en = 1;
+            cache_wrp_dat = wrrq_q_ar.dat;
+            cache_wrp_addr = wrrq_q_ar.addr;
+
+            // If the backside of the cache wants to evict a line.
+            if (cache_bs_en) begin
+                // Signal to the write port of the next stage that we have a write request for it.
+                oup_wrp_req.dat = cache_bs_dat;
+                oup_wrp_req.addr = cache_bs_addr;
+                oup_wrp_rp = 1;
+
+                // If the next stage' write port will accept the request then we signal back end done.
+                cache_bs_done = oup_wrp_op;
+            end
+
+            // If the cache is done.
+            if (cache_wrp_done) begin
+                // If the operation was a success.
+                if (cache_wrp_suc) begin
+                    wrrq_q_se = 1;  // Shift to the next request.
+                end
+
+                // If the operation was not a success.
+                else begin
+                    // Add something here to either pass the request along or throw a hardware error or something.
+                end
+            end
+        end
+
+        // If there is a read request present in the queue.
+        if (rdrq_q_len != 0) begin
+            // Enable the read port on the cache and present the request.
+            cache_rdp_en = 1;
+            cache_rdp_addr = rdrq_q_ar.addr;
+
+            // If the cache is done.
+            if (cache_rdp_done) begin
+                // If the operation was a success.
+                if (cache_rdp_suc) begin
+                    // Present the data to the return path and wait for it to be accepted.
+                    rd_rpl.dat = cache_rdp_dat;
+                    rd_rpl.addr = rdrq_q_ar.addr;
+                    rd_rpl_p = 1;
+
+                    // Shift the request out of the queue once its return is accepted.
+                    rdrq_q_se = rd_rpl_a;
+                end
+
+                // If the operation was not a success, forward it to the next stage.
+                else begin
+                    // Present the request to the other stage and wait for it to accept it.
+                    oup_rdp_req = rdrq_q_ar;
+                    oup_rdp_rp = 1;
+                    
+                    // If the next stage will accept the request next clock cycle then we can shift it out then too.
+                    rdrq_q_se = oup_rdp_op;
+                end
+            end
+        end
+    end
+endmodule
+/*
 // Memory access controller L2 cache stage.
 module mac_l2_stage(
     input clk,
@@ -745,3 +1022,5 @@ module memory_access_controller #(parameter NUMBER_OF_PORTS = 2)(
     // L1 will signal to L2 that eviction is neccesary, L2 will recognise the request and attempt to write the line.
     // If L2 needs to evict then it will submit a request to NOC and be done with it.
 endmodule
+
+*/
