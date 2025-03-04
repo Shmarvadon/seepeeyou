@@ -220,6 +220,7 @@ module mem_acc_l1_stage(
 
     localparam RD_RQ_Q_LEN = 4;
     localparam WR_RQ_Q_LEN = 4;
+    localparam RD_RP_Q_LEN = 4;
 
     // Read request queue.
     line_read_req                   rdrq_q_ar;  // Read request queue active request.   
@@ -244,6 +245,21 @@ module mem_acc_l1_stage(
     assign inp_wrp_op = wrrq_q_len < WR_RQ_Q_LEN ? 1 : 0;
     // If we have room & the prev stage wants to input a request to queue, accept it.
     assign wrrq_q_we = inp_wrp_op && inp_wrp_rp;
+
+    // Read reply queue.
+    line_read_reply                 rdrply_q_ar;    // Read reply queue active request.
+    line_read_reply                 rdrply_q_inp;   // Read reply queue input.
+    logic [$clog2(RD_RP_Q_LEN)-1:0] rdrply_q_len;   // Read reply queue length.
+    logic                           rdrply_q_we;    // Read reply queue write enable.
+    logic                           rdrply_q_se;    // Read reply queue shift enable.
+    fifo_queue #($bits(line_read_reply), RD_RP_Q_LEN) rdrp_q(clk, rst, rdrply_q_inp, rdrply_q_ar, rdrply_q_len, rdrply_q_we, rdrply_q_se);
+
+    // If the read reply queue is longer than 0 (it has a reply in it waiting to be sent).
+    assign rd_rpl_p = rdrply_q_len > 0 ? 1 : 0;
+    // Assign the active request from the read reply queue to drive the reply bit.
+    assign rd_rpl = rdrply_q_ar;
+    // If the retirement stage accepts the reply, shift it out of the queue.
+    assign rdrply_q_se = rd_rpl_a;
 
     // Instantiate an L1 cache block.
     logic [31:0]    cache_rdp_addr;
@@ -275,6 +291,7 @@ module mem_acc_l1_stage(
         cache_wrp_en = 0;
         wrrq_q_se = 0;
         rdrq_q_se = 0;
+        rdrply_q_we = 0;
 
         // If there is a write request present in the queue.
         if (wrrq_q_len != 0) begin
@@ -318,13 +335,19 @@ module mem_acc_l1_stage(
             if (cache_rdp_done) begin
                 // If the operation was a success.
                 if (cache_rdp_suc) begin
-                    // Present the data to the return path and wait for it to be accepted.
-                    rd_rpl.dat = cache_rdp_dat;
-                    rd_rpl.addr = rdrq_q_ar.addr;
-                    rd_rpl_p = 1;
+                    // Present the data to the read reply queue for it to go down the return path.
+                    rdrply_q_inp.dat = cache_rdp_dat;
+                    rdrply_q_inp.addr = rdrq_q_ar.addr;
 
-                    // Shift the request out of the queue once its return is accepted.
-                    rdrq_q_se = rd_rpl_a;
+                    // If the read reply queue can accept the request on next cycle.
+                    if (rdrply_q_len < RD_RP_Q_LEN) begin
+                        // Signal we want to write it.
+                        rdrply_q_we = 1;
+                        // Signal to shift the req out of the read request queue.
+                        rdrq_q_se = 1;
+                    end
+
+                    // If we cant accept the reply to the retirement queue then the cache read port will just sit idle.
                 end
 
                 // If the operation was not a success, forward it to the next stage.

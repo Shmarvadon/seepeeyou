@@ -12,37 +12,45 @@
 */
 
 // Really dumb SRAM that enables us to access 2 lines at a time.
-module cache_sram_block #(parameter LINES = 256, LINE_LENGTH = 256)(
+module dual_port_sram #(parameter LINES = 256, LINE_LENGTH = 256)(
     input clk,
     input rst,
 
-    // Read port.
-    input logic [$clog2(LINES)-1:0]     rdp_line_sel,
-    output logic [LINE_LENGTH-1:0]      rdp_line_dat,
+    // Port 1.
+    input logic [$clog2(LINES)-1:0]     prt_1_addr,
+    input logic                         prt_1_we,
+    input logic [LINE_LENGTH-1:0]       prt_1_dinp,
+    output logic [LINE_LENGTH-1:0]      prt_1_doup,
 
-    // Write port.
-    input logic [$clog2(LINES)-1:0]     wrp_line_sel,
-    input logic [LINE_LENGTH-1:0]       wrp_line_inp,
-    output logic [LINE_LENGTH-1:0]      wrp_line_oup,
-    input logic                         wrp_line_we
+    // Port 2.
+    input logic [$clog2(LINES)-1:0]     prt_2_addr,
+    input logic                         prt_2_we,
+    input logic [LINE_LENGTH-1:0]       prt_2_dinp,
+    output logic [LINE_LENGTH-1:0]      prt_2_doup
 );
     // block of lines, lhs is packed & rhs is not packed.
     bit [LINE_LENGTH-1:0] sram [LINES-1:0];
 
 
     // Continuous assignment for read.
-    assign rdp_line_dat = sram[rdp_line_sel];
-
-    // Continuous assignment for reading for the write port.
-    assign wrp_line_oup = sram[wrp_line_sel];
+    assign prt_1_doup = sram[prt_1_addr];
+    assign prt_2_doup = sram[prt_2_addr];
 
     // always block to handle write port.
     always @(posedge clk) begin
-        if (wrp_line_we) begin
-            sram[wrp_line_sel] = wrp_line_inp;
+        // If port 1 is writing.
+        if (prt_1_we) begin
+            sram[prt_1_addr] = prt_1_dinp;
 
             // Debug printout.
-            $display("A write is happening on line %d writing: %h", wrp_line_sel, wrp_line_inp);
+            $display("A write is happening on line %d writing: %h", prt_1_addr, prt_1_dinp);
+        end
+        // If port 2 is writing.
+        if (prt_2_we) begin
+            sram[prt_2_addr] = prt_2_dinp;
+
+            // Debug printout.
+            $display("A write is happening on line %d writing: %h", prt_2_addr, prt_2_dinp);
         end
     end
 endmodule
@@ -96,9 +104,10 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
     cache_line                  wrp_set_wr  [WAYS-1:0]; // Write port set data write.
     logic [WAYS-1:0]            wrp_line_we;            // Write port line we.
 
-    generate 
+    generate
         for (genvar i = 0; i < WAYS; i = i + 1) begin
-            cache_sram_block #(LINES, $bits(cache_line)) way(clk, rst, rdp_set_sel, rdp_set[i], wrp_set_sel, wrp_set_wr[i], wrp_set_rd[i], wrp_line_we[i]);
+            dual_port_sram #(LINES, $bits(cache_line)) way(.clk(clk), .rst(rst), .prt_1_addr(rdp_set_sel), .prt_1_doup(rdp_set[i]), 
+            .prt_2_addr(wrp_set_sel), .prt_2_dinp(wrp_set_wr[i]), .prt_2_doup(wrp_set_rd[i]), .prt_2_we(wrp_line_we[i]));
         end
     endgenerate
 
@@ -377,7 +386,7 @@ module l1_cache_old #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W 
 
     generate
         for (genvar i = 0; i < WAYS; i=i+1) begin
-            cache_sram_block #(LINES, $bits(cache_line)) way(clk, rst, set_sel, set_inp[i], line_we[i], set_out[i]);
+            dual_port_sram #(LINES, $bits(cache_line)) way(clk, rst, set_sel, set_inp[i], line_we[i], set_out[i]);
         end
     endgenerate
 
@@ -640,7 +649,9 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
 
     // Generate the SRAM blocks for the tag RAM.
     logic [$clog2(LINES)-1:0]   tr_rdp_set_sel;             // Tag ram read port set select.
-    tag_ram_line                tr_rdp_set [WAYS-1:0];      // Tag ram read port set data.
+    tag_ram_line                tr_rdp_set_rd [WAYS-1:0];   // Tag ram read port set data read.
+    tag_ram_line                tr_rdp_set_wr [WAYS-1:0];   // Tag ram read port set data write.
+    logic [WAYS-1:0]            tr_rdp_line_we;             // Tag ram read port line we.
 
     logic [$clog2(LINES)-1:0]   tr_wrp_set_sel;             // Tag ram write port set select.
     tag_ram_line                tr_wrp_set_rd [WAYS-1:0];   // Tag ram write port set data read.
@@ -649,7 +660,7 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
 
     generate 
         for (genvar i = 0; i < WAYS; i = i + 1) begin
-            cache_sram_block #(LINES, $bits(tag_ram_line)) tag_ram_way(clk, rst, tr_rdp_set_sel, tr_rdp_set[i], tr_wrp_set_sel, tr_wrp_set_wr[i], tr_wrp_set_rd[i], tr_wrp_line_we[i]);
+            dual_port_sram #(LINES, $bits(tag_ram_line)) tag_ram_way(clk, rst, tr_rdp_set_sel, tr_rdp_line_we[i], tr_rdp_set_wr[i], tr_rdp_set_rd[i], tr_wrp_set_sel, tr_wrp_line_we[i], tr_wrp_set_wr[i], tr_wrp_set_rd[i]);
         end    
     endgenerate
 
@@ -663,7 +674,9 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
 
     // Generate a bunch of SRAM banks, 1 for each way.
     logic [$clog2(LINES)-1:0]           rdp_set_sel;            // Read port set select.
-    logic [(LINE_LENGTH * 8) - 1 : 0]   rdp_set  [WAYS-1:0];    // Read port set data.
+    logic [(LINE_LENGTH * 8) - 1 : 0]   rdp_set_rd  [WAYS-1:0]; // Read port set data read.
+    logic [(LINE_LENGTH * 8) - 1 : 0]   rdp_set_wr  [WAYS-1:0]; // Read port set data write.
+    logic [WAYS-1:0]                    rdp_line_we;            // Read port line we.
     
     logic [$clog2(LINES)-1:0]           wrp_set_sel;            // Write port set select.
     logic [(LINE_LENGTH * 8) - 1 : 0]   wrp_set_rd  [WAYS-1:0]; // Write port set data read.
@@ -672,7 +685,7 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
 
     generate 
         for (genvar i = 0; i < WAYS; i = i + 1) begin
-            cache_sram_block #(LINES, LINE_LENGTH * 8) way(clk, rst, rdp_set_sel, rdp_set[i], wrp_set_sel, wrp_set_wr[i], wrp_set_rd[i], wrp_line_we[i]);
+            dual_port_sram #(LINES, LINE_LENGTH * 8) way(clk, rst, rdp_set_sel, rdp_line_we[i], rdp_set_wr[i], rdp_set_rd[i], wrp_set_sel, wrp_line_we[i], wrp_set_wr[i], wrp_set_rd[i]);
         end
     endgenerate
 
@@ -695,7 +708,7 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
         // Loop over the tag lines to check if we have the line.
         for (integer i = 0; i < WAYS; i = i + 1) begin
             // If the tag bits match & the line is valid.
-            if (tr_rdp_set[i].addr == fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))] && tr_rdp_set[i].valid) begin
+            if (tr_rdp_set_rd[i].tag == fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))] && tr_rdp_set_rd[i].valid) begin
                 // Signal that we have the cache line.
                 fs_rdp_suc = 1;
                 // Store the index in the read_way_sel so that it can be used to read out the data.
@@ -725,9 +738,11 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
                 fs_rdp_done = 1;
 
                 // Present data to the readport.
-                fs_rdp_dat = rdp_set[read_way_sel];
+                fs_rdp_dat = rdp_set_rd[read_way_sel];
 
                 // Signal to the tag ram that we need to invalidate the line.
+                tr_rdp_line_we[read_way_sel] = 1;
+                tr_rdp_set_wr[read_way_sel] = 0;
             end
             endcase
         end
@@ -806,7 +821,7 @@ module l2_cache_old #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W 
 
     generate
         for (genvar i = 0; i < WAYS; i=i+1) begin
-            cache_sram_block #(LINES, $bits(cache_line)) way(clk, rst, set_sel, set_inp[i], line_we[i], set_out[i]);
+            dual_port_sram #(LINES, $bits(cache_line)) way(clk, rst, set_sel, set_inp[i], line_we[i], set_out[i]);
         end
     endgenerate
 

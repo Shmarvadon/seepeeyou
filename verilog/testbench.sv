@@ -78,6 +78,12 @@ initial begin
     inp_rdp_req.addr = 12345;
     inp_rdp_rp = 1;
 
+    // Wait 4 cycles then stop submitting requests.
+    #80
+
+    inp_rdp_rp = 0;
+    inp_wrp_rp = 0;
+
 
 end
 
