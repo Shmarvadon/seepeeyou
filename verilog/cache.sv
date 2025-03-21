@@ -608,7 +608,7 @@ module l1_cache_old #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W 
 endmodule
 */
 
-// This cache is designed to be somewhat fast but much higher capcity and very area efficient (targeting 8-16 ways).
+// This cache is designed to be somewhat fast but much higher capcity and very area efficient (targeting 8-16 ways), also an exclusive cache.
 module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32)(
     input clk,
     input rst,
@@ -697,83 +697,179 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
 
     //          Logic to handle processing the read and write requests.
 
-    // Comb block to handle read requests.
-    bit [1:0] read_state;
+    // always block to handle read operations.
     bit [$clog2(WAYS)-1:0] read_way_sel;
-    always_comb begin
-        // Default values.
-        fs_rdp_done = 0;
-        fs_rdp_suc = 0;
-
-        // Loop over the tag lines to check if we have the line.
-        for (integer i = 0; i < WAYS; i = i + 1) begin
-            // If the tag bits match & the line is valid.
-            if (tr_rdp_set_rd[i].tag == fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))] && tr_rdp_set_rd[i].valid) begin
-                // Signal that we have the cache line.
-                fs_rdp_suc = 1;
-                // Store the index in the read_way_sel so that it can be used to read out the data.
-                read_way_sel = i;
-            end
-        end
-
-        // If the read port is enabled.
-        if (fs_rdp_en) begin
-            // Do different things based on the state of the read state machine.
-            case (read_state) 
-            
-            // If we are at the checking tag ram stage of the state machine.
-            0:
-            begin
-
-                // If fs_rdp_suc == 0 then we dont have the line.
-                if (!fs_rdp_suc) begin
-                    fs_rdp_done = 1;    // Signal that we are done but dont have the line.
-                end
-            end
-
-            // If we have found the tag for the line in tag RAM.
-            1:
-            begin
-                // Signal done to the front side read port.
-                fs_rdp_done = 1;
-
-                // Present data to the readport.
-                fs_rdp_dat = rdp_set_rd[read_way_sel];
-
-                // Signal to the tag ram that we need to invalidate the line.
-                tr_rdp_line_we[read_way_sel] = 1;
-                tr_rdp_set_wr[read_way_sel] = 0;
-            end
-            endcase
-        end
-        // If the read port is not enabled.
-        else begin
-        end
-    end
-
+    bit [ADDR_W-1:0] prev_rdp_addr;
     always @(posedge clk) begin
+        // Default values.
+        tr_rdp_line_we = 0;
+        read_way_sel = 0;
 
         // If the read port is enabled.
         if (fs_rdp_en) begin
-            // Different behaviour depending on stage of the read.
-            case (read_state)
-            // If we are currently checking tags.
-            0:
-            begin
-                // If we do poses the cache line, transition to read state where we read the data from the line ram.
-                if (fs_rdp_suc) begin
-                    read_state = 1;
+
+            fs_rdp_done = 0;
+            fs_wrp_done = 0;
+
+            // Update the previous addr for fs read port address.
+            prev_rdp_addr <= fs_rdp_addr;
+
+            // If the address has changed, then we stop holding output and process new request.
+            if (prev_rdp_addr != fs_rdp_addr) begin fs_rdp_done = 0; fs_rdp_suc = 0; end
+            // Above should mean that output is held until next request even if en is kept high.
+
+            // If the read port is enabled & not done yet.
+            if (fs_rdp_en & !fs_rdp_done) begin
+
+                // Loop over the tag lines to check if we have the line.
+                for (integer i = 0; i < WAYS; i = i + 1) begin
+                    // If the tag bits match & the line is valid.
+                    if (tr_rdp_set_rd[i].tag == fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))] && tr_rdp_set_rd[i].valid) begin
+                        // Signal that we have the cache line.
+                        fs_rdp_suc = 1;
+                        // Store the index in the read_way_sel so that it can be used to read out the data.
+                        read_way_sel = i;
+                    end
                 end
+
+                // If success.
+                if (fs_rdp_suc) begin
+                    // Signal to tag ram to mark the line as invalid next cycle.
+                    tr_rdp_set_wr[read_way_sel].valid <= 0;
+                    tr_rdp_line_we[read_way_sel] <= 1;
+                end
+
+                // Signal done.
+                fs_rdp_done <= 1;
             end
-            endcase
         end
-        // If the read port is not enabled.
         else begin
-            // Reset read state to 0.
-            read_state = 0;
+            fs_rdp_suc = 0;
+            fs_rdp_done = 0;
         end
     end
 
+    // Assign the read_way_sel bits to drive the output of the read port.
+    assign fs_rdp_dat = rdp_set_rd[read_way_sel];
+
+
+
+    // always block to handle write operations.
+    bit [$clog2(WAYS)-1:0] write_way_sel;
+    bit [$clog2(WAYS)-1:0] rres;
+    bit [ADDR_W-1:0] prev_wrp_addr;
+    bit [3:0] write_state;
+    bit line_found;
+    bit [7:0] evic_timeout;
+    always @(posedge clk) begin
+        // Default values.
+        line_found = 0;
+
+        tr_wrp_line_we = 0;
+        wrp_line_we = 0;
+
+        bs_we = 0;
+
+        // If the front side write port enable is high.
+        if (fs_wrp_en) begin
+
+            fs_wrp_suc = 0;
+            fs_wrp_done = 0;
+
+            // Update the value of prev wrp addr for next clk.
+            prev_wrp_addr <= fs_wrp_addr;
+
+            // If the input addr is not the same as prev cycle, then back to stage 0.
+            if (prev_wrp_addr != fs_wrp_addr) begin
+                write_state = 0;
+            end
+
+            if (!fs_wrp_done) begin
+                case (write_state) 
+                // Stage 1, locate an empty line if possible
+                0:
+                begin
+                    // Loop over all the ways looking for one that is empty.
+                    for (int i = 0; i < WAYS; i = i + 1) begin
+                        // If the line exists already.
+                        if (tr_wrp_set_rd[i].tag == fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))]) begin
+                            write_way_sel = i;
+                            write_state = 1;
+                            line_found = 1;
+                        end
+                        // If the way is empty (valid bit is set to 0), set write state to 1 to indicate that a new line can be written.
+                        if (!tr_wrp_set_rd[i].valid & !line_found) begin write_way_sel = i; write_state = 1; end
+                    end
+
+                    // If write state is still 0, we need to evict a line from this cache to be able to write another line.
+                    if (write_state == 0) write_state = 2;
+
+                    // zero eviction timeout.
+                    evic_timeout <= 0;
+                end
+
+                // Case 1 for stage 2, an empty line is available.
+                1:
+                begin
+                    // Setup the line for a write (data).
+                    wrp_set_wr[write_way_sel] <= fs_wrp_dat;
+                    wrp_line_we[write_way_sel] <= 1;
+
+                    // Setup the line for a write (tag ram).
+                    tr_wrp_set_wr[write_way_sel].tag <= fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))];
+                    tr_wrp_set_wr[write_way_sel].valid <= 1;
+                    tr_wrp_set_wr[write_way_sel].dirty = 1;
+                    tr_wrp_line_we[write_way_sel] <= 1;
+
+                    // Signal done & success.
+                    fs_wrp_done <= 1;
+                    fs_wrp_suc <= 1;
+                end
+
+                // Case 2 for stage 2, no line is available and one needs to be evicted.
+                2:
+                begin
+                    // Present the line for eviction.
+                    bs_addr <= {tr_wrp_set_rd[rres].tag, wrp_set_sel, 0};
+                    bs_dat <= wrp_set_rd[rres];
+                    bs_we <= 1;
+
+                    // If the back side is done.
+                    if (bs_dn) begin
+                        // Setup the line for a write (data).
+                        wrp_set_wr[rres] <= fs_wrp_dat;
+                        wrp_line_we[rres] <= 1;
+
+                        // Setup the line for a write (tag ram).
+                        tr_wrp_set_wr[rres].tag <= fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))];
+                        tr_wrp_set_wr[rres].valid <= 1;
+                        tr_wrp_set_wr[rres].dirty = 1;
+                        tr_wrp_line_we[rres] <= 1;
+
+                        // Signal done & success.
+                        fs_wrp_done <= 1;
+                        fs_wrp_suc <= 1;
+                    end
+                    // If the backside is not done.
+                    else begin
+                        // Incriment the eviction timeout.
+                        evic_timeout = evic_timeout + 1;
+                        // If the timeout is exceeded then cancel the write and signal unsuccsessful.
+                        if (evic_timeout == 255) begin
+                            fs_wrp_done <= 1;
+                            fs_wrp_suc = 0;
+                        end
+                    end
+                end
+                endcase
+            end
+        end
+        else begin
+            fs_wrp_done <= 0;
+            fs_wrp_suc <= 0;
+            write_state <= 0;
+        end
+    end
 endmodule
 
 /*
