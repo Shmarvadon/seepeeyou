@@ -55,6 +55,7 @@ typedef struct packed {
 
 
 // port for IP blocks to interface with NOC stop.
+// This interface GUARANTEES that it will only pass full, complete & contiguous packets.
 interface noc_ip_port;
 
     // Some stuff to inform the connected IP of its port number and address.
@@ -83,6 +84,7 @@ interface noc_ip_port;
 
 endinterface
 
+// Struct for NOC transmission infomation.
 // Should be 3 bytes in size.
 typedef struct packed { // MSB
     logic [3:0] src_addr;
@@ -94,10 +96,29 @@ typedef struct packed { // MSB
     logic [7:0] len;                // Maximum length of 36B for enire packet, 32B for payload.
 } noc_packet_header;    // LSB
 
-// Represents maximum packet size of 36B
+// Represents maximum packet size of 36B, should NOT be used to represent an actual packet.
 typedef struct packed { // MSB
     logic [255:0]       dat;        // Dont really care whats in here. Its for the IP block on recieveing end to deal with. Also length is just a placeholder, actual length of packet can be shorter.
     noc_packet_header   hdr;        // Standard header for the packet.
 } noc_packet;           // LSB
 
 
+// Memory read request.
+typedef struct packed { // MSB
+    logic [31:0]        addr;
+    logic [7:0]         pt;
+} mem_rd_rq;            // LSB
+
+// Memory write request.
+typedef struct packed { // MSB
+    logic [31:0]        addr;
+    logic [127:0]       dat;
+    logic [7:0]         pt;
+} mem_wr_rq;            // LSB
+
+// Memory read reply.
+typedef struct packed { // MSB
+    logic [31:0]        addr;
+    logic [127:0]       dat;
+    logic [7:0]         pt;
+} mem_rd_rp;            // LSB

@@ -6,7 +6,7 @@ module fifo_queue #(parameter WIDTH, LENGTH)(
     
     input [WIDTH-1:0]               d_in,
     output [WIDTH-1:0]              d_out,
-    output bit [$clog2(LENGTH)+1]   used_pos,
+    output bit [$clog2(LENGTH)-1:0]   used_pos,
 
     input                           we,
     input                           se

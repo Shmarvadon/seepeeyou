@@ -282,7 +282,7 @@ module mem_acc_l1_stage(
 
     l1_cache #(4, 256, 16, 32) l1(clk, rst, cache_rdp_addr, cache_rdp_en, cache_rdp_dat, cache_rdp_done, cache_rdp_suc,
                                   cache_wrp_addr, cache_wrp_en, cache_wrp_dat, cache_wrp_done, cache_wrp_suc,
-                                  cache_bs_adr, cache_bs_dat, cache_bs_en, cache_bs_done);
+                                  cache_bs_addr, cache_bs_dat, cache_bs_en, cache_bs_done);
 
 
     // Comb block to handle dispatching write & read requests.
@@ -365,211 +365,6 @@ module mem_acc_l1_stage(
     end
 endmodule
 
-// Memory access controller NOC stage.
-module mem_acc_noc_stage(
-    input clk,
-    input rst,
-    
-    // Inputs to this stage.
-
-    // Read port.
-    input logic            inp_rdp_rp,   // Read port request present.
-    input line_read_req    inp_rdp_req,  // Read port request.
-    output logic           inp_rdp_op,   // Read port open.
-
-    // Write port.
-    input logic            inp_wrp_rp,   // Write port request present.
-    input line_write_req   inp_wrp_req,  // Write port request.
-    output logic           inp_wrp_op,   // Write port open.
-
-    // Outputs from this stage.
-
-    // Return channel for completed requests.
-    output logic rd_rpl_p,
-    output line_read_reply rd_rpl,
-    input logic rd_rpl_a
-);
-endmodule
-
-/*
-// Memory access controller L1 cache stage.
-module mac_l1_stage(
-    input clk,
-    input rst,
-
-    // Interface to input and output of requests from this stage.
-    mac_stage_intf req_intf,
-
-    // Return channel for completed requests.
-    output mem_acc_req completed_request_output,
-    output logic completed_request_present,
-    input   completed_request_accepted
-);
-
-    // L1 cache.
-    bit [31:0] fs_addr;
-    bit fs_wr;
-    bit fs_go;
-    bit [127:0] fs_inp;
-    bit bs_done;
-
-    logic fs_done;
-    logic fs_suc;
-    logic [127:0] fs_oup;
-    logic [31:0] bs_addr;
-    logic [127:0] bs_oup;
-    logic bs_we;
-
-    l1_cache #(4, 256, 16, 32) l1_cache(clk, rst, fs_addr, fs_wr, fs_go, fs_done, fs_suc, fs_inp, fs_oup, bs_addr, bs_oup, bs_we, bs_done);
-
-    // Input request buffer.
-    mem_acc_req         ar;         // Active request.
-    logic [3:0]         rql;        // Request queue length.
-    logic               rq_we;      // Request queue write enable.
-    logic               rq_se = 0;      // Request queue shift enable.
-    fifo_queue #($bits(mem_acc_req), 8) request_queue(clk, rst, req_intf.inp_req, ar, rql, rq_we, rq_se);
-
-    // If there is a request to input a new request & the queue has room then we bring write enable high.
-    assign rq_we = rql != 8 ? req_intf.inp_rp : 0;
-    // If write enable is high then we must have accepted the request.
-    assign req_intf.inp_ra = rq_we ? 1 : 0;
-
-    // Present active request to the cache.
-    assign fs_addr = ar.addr;
-    assign fs_inp = ar.dat;
-    assign fs_wr   = ar.rqt;
-
-    // represents the state of this stage: cache enabled, return success (cache paused), forward to next stage (cache paused).
-    bit [3:0] state;
-
-    always_latch begin
-        // default value.
-        fs_go = 0;
-        completed_request_present = 0;
-        req_intf.oup_rp = 0;
-        rq_se = 0;
-        bs_done = 0;
-
-        case(state) 
-        // Stage 1, run the request through the cache.
-        0:
-        begin
-            // If there is a request present in the request queue.
-            if (rql != 0) begin
-                // If the cache is not done.
-                if (!fs_done) begin
-                    fs_go = 1;  // Tell the cache to do the request.
-
-                    // If the back side of the cache is signalling that it wants to evict a line.
-                    if (bs_we) begin
-                        // Translate the backside request into something to be forwarded to the next stage.
-                        req_intf.oup_rp = 1;
-                        req_intf.oup_req.addr = bs_addr;
-                        req_intf.oup_req.dat = bs_oup;
-                        req_intf.oup_req.orig = 0;
-                        req_intf.oup_req.rqt = 1;
-
-                        // If the next stage accepts the request.
-                        if (req_intf.oup_ra) begin
-                            bs_done = 1;
-                        end
-                    end
-                end
-                // If the cache is done.
-                else begin
-                    // Tell the cache to stop going (this wont affect its output till next clk cycle).
-                    fs_go = 0;
-
-                    // If the operation was successful.
-                    if (fs_suc) begin  
-                        // Signal to the rest of the memory access controller that the request has been completed successfully.
-                        completed_request_output.addr = ar.addr;            // Request address.
-                        completed_request_output.dat = fs_oup;              // Request data (if any is returned).
-                        completed_request_output.rqt = ar.rqt;              // Request type.
-                        completed_request_output.orig = ar.orig;            // Request origin (used to route it to the correct port).
-                        completed_request_output.rsuc = 1;                  // Mark the request as successful.
-
-                        // Indicate a request is ready to be returned.
-                        completed_request_present = 1;
-                    end
-                    // If not successful then we need to propogate it forwards probably.
-                    else begin
-                        // Set the output request from this stage to be the current request.
-                        req_intf.oup_req = ar;
-
-                        // Signal that a request is ready.
-                        req_intf.oup_rp = 1;
-                    end
-
-                    // Set shift enable high for 1 clk cycle for the input queue to shift to the next request (if one is present).
-                    rq_se = 1;
-                end
-            end
-        end
-
-        // Returning result because it was successful stage.
-        1:
-        begin
-            // Indicate a request is ready to be returned.
-            completed_request_present = 1;
-        end
-
-        // Forwarding result to the next stage.
-        2:
-        begin
-            // Signal that a request is ready.
-            req_intf.oup_rp = 1;
-        end
-        endcase
-    end
-
-    always @(posedge clk) begin
-        case(state)
-        // Stage 1, run the request through the cache.
-        0:
-        begin
-            // If the cache is done.
-            if (fs_done) begin
-                // If the operation was successful, we need to return the result.
-                if (fs_suc) begin  
-                    // Move to waiting to return successful request to rest of MAC stage if return accepted not signalled yet.
-                    if (!completed_request_accepted) state = 1;
-                end
-                // If not successful then we need to propogate it forwards probably.
-                else begin
-                    // Move to wait for request to forward to next stage if next stage has not accepted request yet.
-                    if (!req_intf.oup_ra) state = 2;
-                end
-            end
-        end
-
-        // Waiting for memory access controller to signal it has accepted the return.
-        1:
-        begin
-            // If the rest of the memory access controller accepts the returned request.
-            if (completed_request_accepted) begin
-                // move back to the stage where cache is enabled.
-                state = 0;
-            end
-        end
-
-        // Waiting for the next stage to signal that it has accepted the request.
-        2:
-        begin
-            // If the next stage has accepted the result.
-            if (req_intf.oup_ra) begin
-                // Move back to stage where the cache is enabled.
-                state = 0;
-            end
-        end
-        endcase
-    end
-
-    // Handle back side of the cache.
-endmodule
-*/
-
-// No longer working on this.
 // Memory access controller L2 cache stage.
 module mem_acc_l2_stage(
     input clk,
@@ -743,7 +538,7 @@ module mem_acc_l2_stage(
                     rdrply_q_we = 1;
 
                     // If the read reply queue can accept the reply.
-                    if (rdrply_q_len != RDRPL_Q_LEN) begin
+                    if (rdrply_q_len != RD_RP_Q_LEN) begin
                         // Shift the request out of the read request queue.
                         rdrq_q_se = 1;
                         // Disable the cache read port for a single cycle.
@@ -771,256 +566,264 @@ module mem_acc_l2_stage(
     end
 endmodule
 
-/*
-// Memory access controller L2 cache stage.
-module mac_l2_stage(
-    input clk,
-    input rst,
-
-    // Interface to input and output requests from this stage.
-    mac_stage_intf req_intf,
-
-    // Return channel for completed requests.
-    output mem_acc_req  comp_req_oup,   // Completed request output.
-    output logic        comp_req_pre,   // Completed request present.
-    input               comp_req_ac     // Completed request accepted.
-);
-    // L2 cache.
-    bit [31:0]      fs_addr;
-    bit             fs_wr;
-    bit             fs_go;
-    bit [127:0]     fs_inp;
-    bit             bs_done;
-
-    logic           fs_done;
-    logic           fs_suc;
-    logic [127:0]   fs_oup;
-    logic [31:0]    bs_addr;
-    logic [127:0]   bs_oup;
-    logic           bs_we;
-
-    l2_cache #(8, 256, 16, 32, 4) l2_cache(clk, rst, fs_addr, fs_wr, fs_go, fs_done, fs_suc, fs_inp, fs_oup, bs_addr, bs_oup, bs_we, bs_done);
-
-    // request input buffer.
-    mem_acc_req         ar;         // Active request.
-    logic [3:0]         rql;        // Request queue length.
-    logic               rq_we;      // Request write enable.
-    logic               rq_se = 0;  // Request shift enable.
-    fifo_queue #($bits(mem_acc_req), 8) request_queue(clk, rst, req_intf.inp_req, ar, rql, rq_we, rq_se);
-
-    // If there is a request to input a new request & the queue has room then we bring write enable high.
-    assign rq_we = rql != 8 ? req_intf.inp_rp : 0;
-    // If write enable is high then we must have accepted the request.
-    assign req_intf.inp_ra = rq_we ? 1 : 0;
-
-    // Present active request to the cache.
-    assign fs_addr  = ar.addr;
-    assign fs_inp   = ar.dat;
-    assign fs_wr    = ar.rqt;
-
-    // Represent the stage of this stage: cache enabled, return success (cache paused), forward to next stage (cache pauded).
-    bit [3:0] state;
-
-    always_latch begin
-        // default value.
-        fs_go = 0;
-        comp_req_pre = 0;
-        req_intf.oup_rp = 0;
-        rq_se = 0;
-
-        case(state) 
-        // Stage 1, run the request through the cache.
-        0:
-        begin
-            // If there is a request present in the request queue.
-            if (rql != 0) begin
-                // If the cache is not done.
-                if (!fs_done) fs_go = 1;  // Tell the cache to do the request.
-                // If the cache is done.
-                else begin
-                    // Tell the cache to stop going (this wont affect its output till next clk cycle).
-                    fs_go = 0;
-
-                    // If the operation was successful.
-                    if (fs_suc) begin  
-                        // If the request was a read (we dont respond to writes as writes to L2 exclusively come from L1 eviction).
-                        if (!ar.rqt) begin
-                            // Signal to the rest of the memory access controller that the request has been completed successfully.
-                            comp_req_oup.addr = ar.addr;            // Request address.
-                            comp_req_oup.dat = fs_oup;              // Request data (if any is returned).
-                            comp_req_oup.rqt = ar.rqt;              // Request type.
-                            comp_req_oup.orig = ar.orig;            // Request origin (used to route it to the correct port).
-                            comp_req_oup.rsuc = 1;                  // Mark the request as successful.
-
-                            // Indicate a request is ready to be returned.
-                            comp_req_pre = 1;
-                        end
-                    end
-                    // If not successful then we need to propogate it forwards probably.
-                    else begin
-                        // Set the output request from this stage to be the current request.
-                        req_intf.oup_req = ar;
-
-                        // Signal that a request is ready.
-                        req_intf.oup_rp = 1;
-                    end
-
-                    // Set shift enable high for 1 clk cycle for the input queue to shift to the next request (if one is present).
-                    rq_se = 1;
-                end
-            end
-        end
-
-        // Returning result because it was successful stage.
-        1:
-        begin
-            // Indicate a request is ready to be returned.
-            comp_req_pre = 1;
-        end
-
-        // Forwarding result to the next stage.
-        2:
-        begin
-            // Signal that a request is ready.
-            req_intf.oup_rp = 1;
-        end
-        endcase
-    end
-
-    always @(posedge clk) begin
-        case(state)
-        // Stage 1, run the request through the cache.
-        0:
-        begin
-            // If the cache is done.
-            if (fs_done) begin
-                // If the operation was successful, we need to return the result.
-                if (fs_suc) begin  
-                    // If the request was a read request (we dont report back on writes as they exclusively come from L1 eviction).
-                    if (!ar.rqt) begin
-                        // Move to waiting to return successful request to rest of MAC stage if return accepted not signalled yet.
-                        if (!comp_req_ac) state = 1;
-                    end
-                end
-                // If not successful then we need to propogate it forwards probably.
-                else begin
-                    // Move to wait for request to forward to next stage if next stage has not accepted request yet.
-                    if (!req_intf.oup_ra) state = 2;
-                end
-            end
-        end
-
-        // Waiting for memory access controller to signal it has accepted the return.
-        1:
-        begin
-            // If the rest of the memory access controller accepts the returned request.
-            if (comp_req_ac) begin
-                // move back to the stage where cache is enabled.
-                state = 0;
-            end
-        end
-
-        // Waiting for the next stage to signal that it has accepted the request.
-        2:
-        begin
-            // If the next stage has accepted the result.
-            if (req_intf.oup_ra) begin
-                // Move back to stage where the cache is enabled.
-                state = 0;
-            end
-        end
-        endcase
-    end
-endmodule
-
 // Memory access controller NOC stage.
-module mac_noc_stage(
+// Might also be able to add a snoop filter here later for full coherence.
+module mem_acc_noc_stage(
     input clk,
     input rst,
 
+    // Inputs to this stage.
 
-    // Interface to input and output requests from this stage.
-    mac_stage_intf.drive_output req_intf,
+    // Read port.
+    input logic            inp_rdp_rp,   // Read port request present.
+    input line_read_req    inp_rdp_req,  // Read port request.
+    output logic           inp_rdp_op,   // Read port open.
+
+    // Write port.
+    input logic            inp_wrp_rp,   // Write port request present.
+    input line_write_req   inp_wrp_req,  // Write port request.
+    output logic           inp_wrp_op,   // Write port open.
+
+    // Outputs from this stage.
+
+    noc_ip_port.ip_side noc_port,
 
     // Return channel for completed requests.
-    output mem_acc_req  comp_req_oup,   // Completed request output.
-    output logic        comp_req_pre,   // Completed request present.
-    input               comp_req_ac,    // Completed request accepted.
-
-    // NOC stop port.
-    noc_ip_port.ip_side noc_prt         // NOC IP interface port to dispatch requests to SOC IMC.
+    output logic rd_rpl_p,
+    output line_read_reply rd_rpl,
+    input logic rd_rpl_a
 );
 
-    // request input buffer.
-    mem_acc_req         ar;         // Active request.
-    logic [3:0]         rql;        // Request queue length.
-    logic               rq_we;      // Request write enable.
-    logic               rq_se = 0;  // Request shift enable.
-    fifo_queue #($bits(mem_acc_req), 8) request_queue(clk, rst, req_intf.inp_req, ar, rql, rq_we, rq_se);
+    localparam RD_RQ_Q_LEN = 4;
+    localparam WR_RQ_Q_LEN = 4;
+    localparam RD_RP_Q_LEN = 4;
 
-    // If there is a request to input a new request & the queue has room then we bring write enable high.
-    assign rq_we = rql != 8 ? req_intf.inp_rp : 0;
-    // If write enable is high then we must have accepted the request.
-    assign req_intf.inp_ra = rq_we ? 1 : 0;
+    // Read request queue.
+    line_read_req                   rdrq_q_ar;  // Read request queue active request.   
+    logic [$clog2(RD_RQ_Q_LEN)-1:0] rdrq_q_len; // Read request queue length.
+    logic                           rdrq_q_we;  // Read request queue write enable.
+    logic                           rdrq_q_se;  // Read request queue shift enable.
+    fifo_queue #($bits(line_read_req), RD_RQ_Q_LEN) rdrq_q(clk, rst, inp_rdp_req, rdrq_q_ar, rdrq_q_len, rdrq_q_we, rdrq_q_se);
 
-    // Assign stuff to drive noc ip port tx lines.
-    assign noc_prt.tx_dat.dat = ar;
+    // If we have room for another request in the queue then we accept it.
+    assign inp_rdp_op = rdrq_q_len < RD_RQ_Q_LEN ? 1 : 0;
+    // If we have room & the prev stage wants to input a request to queue, accept it.
+    assign rdrq_q_we = inp_rdp_op && inp_rdp_rp; 
 
-    assign noc_prt.tx_dat.hdr.src_port = noc_prt.prt_num;
-    assign noc_prt.tx_dat.hdr.src_addr = noc_prt.prt_addr;
+    // Write request queue.
+    line_write_req                  wrrq_q_ar;  // Write request queue active request.
+    logic [$clog2(WR_RQ_Q_LEN)-1:0] wrrq_q_len; // Write request queue length.
+    logic                           wrrq_q_we;  // Write request queue write enable.
+    logic                           wrrq_q_se;  // Write request queue shift enable.
+    fifo_queue #($bits(line_write_req), WR_RQ_Q_LEN) wrrq_q(clk, rst, inp_wrp_req, wrrq_q_ar, wrrq_q_len, wrrq_q_we, wrrq_q_se);
 
-    assign noc_prt.tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
-    assign noc_prt.tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
+    // If we have room for another request in the queue then we accept it.
+    assign inp_wrp_op = wrrq_q_len < WR_RQ_Q_LEN ? 1 : 0;
+    // If we have room & the prev stage wants to input a request to queue, accept it.
+    assign wrrq_q_we = inp_wrp_op && inp_wrp_rp;
 
-    assign noc_prt.tx_dat.hdr.len = ($bits(mem_acc_req) / 8) + ($bits(noc_packet_header) / 8);   // Length of packet is length of header + length of payload.
+    // Read reply queue.
+    line_read_reply                 rdrply_q_ar;    // Read reply queue active request.
+    line_read_reply                 rdrply_q_inp;   // Read reply queue input.
+    logic [$clog2(RD_RP_Q_LEN)-1:0] rdrply_q_len;   // Read reply queue length.
+    logic                           rdrply_q_we;    // Read reply queue write enable.
+    logic                           rdrply_q_se;    // Read reply queue shift enable.
+    fifo_queue #($bits(line_read_reply), RD_RP_Q_LEN) rdrp_q(clk, rst, rdrply_q_inp, rdrply_q_ar, rdrply_q_len, rdrply_q_we, rdrply_q_se);
+
+    // If the read reply queue is longer than 0 (it has a reply in it waiting to be sent).
+    assign rd_rpl_p = rdrply_q_len > 0 ? 1 : 0;
+    // Assign the active request from the read reply queue to drive the reply bit.
+    assign rd_rpl = rdrply_q_ar;
+    // If the retirement stage accepts the reply, shift it out of the queue.
+    assign rdrply_q_se = rd_rpl_a;
 
 
-    // Comb block for submitting the request to NOC.
+    //          NOC stuff
+    assign noc_port.tx_dat.hdr.src_addr = noc_port.prt_addr;
+    assign noc_port.tx_dat.hdr.src_port = noc_port.prt_num;
+
+    bit snd_r_or_w = 0; // 0 means send read, 1 means send write.
+
+    // Some packed structs to represent the 2 types of packet we could send.
+    mem_rd_rq mem_rr;
+    mem_wr_rq mem_wr;
+
+    // If 1 assign write req, if 0 assign read req.
+    assign noc_port.tx_dat.dat = snd_r_or_w ? mem_wr : mem_rr;
+
+    // ***SOMETHING ABOUT THIS IS BAD, IDK WHAT BUT I HAVE INTERVIEW SOON SO CANT WORK ON IT, PLS REMEMBER THIS.***
+    // Logic to handle sending requests (read & write) to main memory.
     always_comb begin
         // Default values.
-        rq_se = 0;
-        noc_prt.tx_av = 0;
+        noc_port.tx_av = 0;
 
-        // Check if request queue length is > 0 then lets signal to noc port that we want to send it a request.
-        if (rql > 0) begin
-            // Signal to the noc stop that we want to send a packet to it.
-            noc_prt.tx_av = 1;
+        wrrq_q_se = 0;
+        rdrq_q_se = 0;
 
-            // If the noc stop accepts the request then we signal to the request queue to shift to next request on clk.
-            if (noc_prt.tx_re) begin
-                rq_se = 1;
+        // If we are to be sending a write request.
+        if (snd_r_or_w) begin
+
+            // Present the request to the noc port.
+            noc_port.tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
+            noc_port.tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
+            noc_port.tx_dat.hdr.len = $bits(noc_packet_header) + $bits(mem_wr_rq);
+            mem_wr.addr = wrrq_q_ar.addr;
+            mem_wr.dat = wrrq_q_ar.dat;
+            mem_wr.pt = memory_write_request;
+
+            // Signal that the request is present if one actually is.
+            if (wrrq_q_len != 0) begin
+                noc_port.tx_av = 1;
+
+                // If the noc port will accept the request on next clock, then shift the write request queue.
+                wrrq_q_se = noc_port.tx_re;
+            end
+        end
+
+        // If we are to be sending a read request.
+        else begin
+
+            // Present the request to the noc port.
+            noc_port.tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
+            noc_port.tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
+            noc_port.tx_dat.hdr.len = $bits(noc_packet_header) + $bits(mem_rd_rq);
+            mem_rr.addr = rdrq_q_ar;
+            mem_rr.pt = memory_read_request;
+
+            // Signal that the request is present if one actually is.
+            if (rdrq_q_len != 0) begin
+                noc_port.tx_av = 1;
+
+                // If the noc port will accept the request on next clock, then shift the read request queue.
+                rdrq_q_se = noc_port.tx_re;
             end
         end
     end
 
-    // Logic to recieve replies from the NOC for the memory access requests & buffer them in an 8 long shift reg for return to the scheduler when its able to accept them.
-
-    // request output buffer.
-    mem_acc_req         comp_req_q_oup;         // Active request.
-    logic [3:0]         comp_req_q_len;         // Completed request queue length.
-    logic               comp_req_q_we;          // Completed request write enable.
-    logic               comp_req_q_se;          // Completed request shift enable.
-    fifo_queue #($bits(mem_acc_req), 8) comptd_req_q(clk, rst, noc_prt.rx_dat.dat[0+:$bits(mem_acc_req)], comp_req_q_oup, comp_req_q_len, comp_req_q_we, comp_req_q_se);
-
-    // If the noc has an rx to return & queue isnt full accept it.
-    assign comp_req_q_we = comp_req_q_len != 8 ? noc_prt.rx_av : 0;
-
-    // Assign write enable for the queue to drive the "request read" response to the NOC stop.
-    assign noc_prt.rx_re = comp_req_q_we;
-
-
-    // Some assigns to handle returning stuff from the queue to the scheduler.
+    // Logic to handle alternating between sending off write requests & read requests.
+    always @(posedge clk) begin
+        // If last cycle a write was sent.
+        if (snd_r_or_w) begin
+            // If there is a read request to be sent next cycle.
+            if (rdrq_q_len != 0) snd_r_or_w <= 0;
+        end
+        // If last cycle a read was sent.
+        else begin
+            // If there is a write request to be sent next cycle.
+            if (wrrq_q_len != 0) snd_r_or_w <= 1;
+        end
+    end
 
 
-    // Assign the output of the completed request buffer to drive the return path.
-    assign comp_req_oup = comp_req_q_oup;
-    // Signal a completed request is present if the queue is longer than 0.
-    assign comp_req_pre = comp_req_q_len != 0 ? 1 : 0;
-    // If the scheduler accepts the return then signal the queue to shift.
-    assign comp_req_q_se = comp_req_ac;
+    // Logic to handle recieveing replies from the NOC.
+    always_comb begin
+        // Default values.
+        noc_port.rx_re = 0;
+        rdrply_q_we = 0;
+
+        // If the noc port has an rx for us.
+        if (noc_port.rx_av) begin
+            // If the packet is a read reply.
+            if (noc_port.rx_dat.dat[7:0] == memory_read_reply) begin
+                // Present data to the read reply queue.
+                rdrply_q_inp.addr = noc_port.rx_dat.dat[8+:32];     // Pass the address data.
+                rdrply_q_inp.dat = noc_port.rx_dat.dat[40+:128];    // Pass the line data.
+
+                // If there is room to shift into the read reply queue.
+                if (rdrply_q_len != RD_RP_Q_LEN) begin
+                    // Signal to the read reply queue that data is available.
+                    rdrply_q_we = 1;
+                    // Signal to the noc port that we have read the rx.
+                    noc_port.rx_re = 1;
+                end
+            end
+        end
+    end
 endmodule
 
 
+// Memory access controller.
+module mem_acc_cont #(parameter NUM_PORTS = 2)(
+    input clk,
+    input rst,
+
+    // Front end (core side) ports that requests are submitted to and replied from.
+       
+    // Request submission.
+    input  logic [NUM_PORTS]         fs_prts_inp_rp,    // Front end ports input request present.
+    input  line_acc_req [NUM_PORTS]  fs_prts_inp_req,   // Front end ports input request.
+    output logic [NUM_PORTS]         fs_prts_inp_op,    // Front end ports input open.
+
+    // Request reply.
+    output logic [NUM_PORTS]         fs_prts_oup_rp,    // Front end ports output request present.
+    output line_acc_req [NUM_PORTS]  fs_prts_oup_req,   // Front end ports output request.
+    input logic [NUM_PORTS]          fs_prts_oup_op,    // Front end ports output open.
+
+
+    // Back end (noc side) port to interfave with the NOC.
+
+    noc_ip_port.ip_side             noc_port            // Noc interface port.
+);
+
+    // request scheduler stage.
+    logic               stg_1_rdp_rp;   // Stage 1 read port request present.
+    line_read_req       stg_1_rdp_req;  // Stage 1 read port request.
+    logic               stg_1_rdp_op;   // Stage 1 read port open.
+
+    logic               stg_1_wrp_rp;   // Stage 1 write port request present.
+    line_write_req      stg_1_wrp_req;  // Stage 1 write port request.
+    logic               stg_1_wrp_op;   // Stage 1 write port open.
+
+    logic [3]           rd_rpl_p;       // Read reply present.
+    line_read_reply [3] rd_rpl;         // Read reply.
+    logic [3]           rd_rpl_a;       // Read reply accepted.
+
+    mem_acc_scheduler #(NUM_PORTS) scheduler(clk, rst, 
+    fs_prts_inp_rp, fs_prts_inp_req, fs_prts_inp_op, fs_prts_oup_rp, fs_prts_oup_req, fs_prts_oup_op,
+    stg_1_rdp_rp, stg_1_rdp_req, stg_1_rdp_op, stg_1_wrp_rp, stg_1_wrp_req, stg_1_wrp_op,
+    rd_rpl_p, rd_rpl, rd_rpl_a);
+
+
+    // L1 cache stage.
+    logic               stg_2_rdp_rp;   // Stage 2 read port request present.
+    line_read_req       stg_2_rdp_req;  // Stage 2 read port request.
+    logic               stg_2_rdp_op;   // Stage 2 read port open.
+
+    logic               stg_2_wrp_rp;   // Stage 2 write port request present.
+    line_write_req      stg_2_wrp_req;  // Stage 2 write port request.
+    logic               stg_2_wrp_op;   // Stage 2 write port open.
+
+    mem_acc_l1_stage l1_cache(clk, rst, 
+    stg_1_rdp_rp, stg_1_rdp_req, stg_1_rdp_op, stg_1_wrp_rp, stg_1_wrp_req, stg_1_wrp_op,
+    stg_2_rdp_rp, stg_2_rdp_req, st_2_rdp_op, stg_2_wrp_rp, stg_2_wrp_req, stg_2_wrp_op,
+    rd_rpl_p[0], rd_rpl[0], rd_rpl_a[0]);
+
+
+    // L2 cache.
+    logic               stg_3_rdp_rp;   // Stage 3 read port request present.
+    line_read_req       stg_3_rdp_req;  // Stage 3 read port request.
+    logic               stg_3_rdp_op;   // Stage 3 read port open.
+
+    logic               stg_3_wrp_rp;   // Stage 3 write port request present.
+    line_write_req      stg_3_wrp_req;  // Stage 3 write port request.
+    logic               stg_3_wrp_op;   // Stage 3 write port open.
+
+    mem_acc_l2_stage l2_cache(clk, rst, 
+    stg_2_rdp_rp, stg_2_rdp_req, stg_2_rdp_op, stg_2_wrp_rp, stg_2_wrp_req, stg_2_wrp_op,
+    stg_3_rdp_rp, stg_3_rdp_req, st_3_rdp_op, stg_3_wrp_rp, stg_3_wrp_req, stg_3_wrp_op,
+    rd_rpl_p[1], rd_rpl[1], rd_rpl_a[1]);
+
+
+    // NOC interface stage.
+
+    mem_acc_noc_stage noc_stage(clk, rst,
+    stg_3_rdp_rp, stg_2_rdp_req, stg_3_rdp_op, stg_3_wrp_rp, stg_3_wrp_req, sth_3_wrp_op,
+    noc_port,
+    rd_rpl_p[2], rd_rpl[2], rd_rpl_a[2]);
+
+endmodule
+
+/*
 module memory_access_controller #(parameter NUMBER_OF_PORTS = 2)(
     input clk,
     input rst,
@@ -1117,5 +920,4 @@ module memory_access_controller #(parameter NUMBER_OF_PORTS = 2)(
     // L1 will signal to L2 that eviction is neccesary, L2 will recognise the request and attempt to write the line.
     // If L2 needs to evict then it will submit a request to NOC and be done with it.
 endmodule
-
 */

@@ -6,7 +6,7 @@
 //`include "nocstop.sv"
 `include "core_memory_access_controller.sv"
 
-// Test bench for L1 stage of mem acc controller.
+// Test bench for L2 stage of mem acc controller.
 module tb;
 
 bit clk;
@@ -39,10 +39,9 @@ bit rst = 0;
     line_read_reply rd_rpl;
     logic rd_rpl_a;
 
-    mem_acc_l1_stage l1_stg(clk, rst, inp_rdp_rp, inp_rdp_req, inp_rdp_op, inp_wrp_rp,
+    mem_acc_l2_stage l2_stg(clk, rst, inp_rdp_rp, inp_rdp_req, inp_rdp_op, inp_wrp_rp,
     inp_wrp_req, inp_wrp_op, oup_rdp_rp, oup_rdp_req, oup_rdp_op, oup_wrp_rp,
-    oup_wrp_req, oup_wrp_op, rd_rpl_p, rd_rpl, rd_rpl_a
-);
+    oup_wrp_req, oup_wrp_op, rd_rpl_p, rd_rpl, rd_rpl_a);
 
 
 initial begin
@@ -96,6 +95,98 @@ always @(posedge clk) begin
 end
 
 endmodule
+
+/*
+// Test bench for L1 stage of mem acc controller.
+module tb;
+
+bit clk;
+bit rst = 0;
+
+    // Read port.
+    logic            inp_rdp_rp;   // Read port request present.
+    line_read_req    inp_rdp_req;  // Read port request.
+    logic           inp_rdp_op;   // Read port open.
+
+    // Write port.
+    logic            inp_wrp_rp;   // Write port request present.
+    line_write_req   inp_wrp_req;  // Write port request.
+    logic           inp_wrp_op;   // Write port open.
+
+    // Outputs from this stage.
+
+    // Read port.
+    logic            oup_rdp_rp;   // Read port request present.
+    line_read_req    oup_rdp_req;  // Read port request.
+    logic             oup_rdp_op;   // Read port open.
+
+    // Write port.
+    logic            oup_wrp_rp;   // Write port request present.
+    line_write_req   oup_wrp_req;  // Write port request.
+    logic             oup_wrp_op;   // Write port open.
+
+    // Return channel for completed requests.
+    logic rd_rpl_p;
+    line_read_reply rd_rpl;
+    logic rd_rpl_a;
+
+    mem_acc_l1_stage l1_stg(clk, rst, inp_rdp_rp, inp_rdp_req, inp_rdp_op, inp_wrp_rp,
+    inp_wrp_req, inp_wrp_op, oup_rdp_rp, oup_rdp_req, oup_rdp_op, oup_wrp_rp,
+    oup_wrp_req, oup_wrp_op, rd_rpl_p, rd_rpl, rd_rpl_a);
+
+
+initial begin
+    rd_rpl_a = 1;
+    // Present a write request to address 12345.
+    inp_wrp_req.addr = 12345;
+    inp_wrp_req.dat = 420;
+    inp_wrp_rp = 1;
+
+    // Should take 1 cycles to be accepted.
+    #20
+
+    // Stop the write from reoccuring.
+    inp_wrp_rp = 0;
+
+    #20
+
+    // Present a read request to the cache at 12345.
+    inp_rdp_req.addr = 12345;
+    inp_rdp_rp = 1;
+
+    // Wait a cycle then disable the read port.
+    #20
+    inp_rdp_rp = 0;
+
+    #40
+
+    // Try to do a simultaneous read + write to 2 different addresses.
+    inp_wrp_req.addr = 42069;
+    inp_wrp_req.dat = 256;
+    inp_wrp_rp = 1;
+
+    inp_rdp_req.addr = 12345;
+    inp_rdp_rp = 1;
+
+    // Wait 4 cycles then stop submitting requests.
+    #80
+
+    inp_rdp_rp = 0;
+    inp_wrp_rp = 0;
+
+
+end
+
+always begin
+    #10 clk = ~clk;
+end
+
+always @(posedge clk) begin
+    $display("Clock! %t", $time);
+end
+
+endmodule
+*/
 
 /*
 // Validating new L1 cache.
