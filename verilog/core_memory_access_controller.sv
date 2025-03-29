@@ -38,14 +38,14 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
     // Communicate with the front end ports.
 
     // Request submission.
-    input  logic [NUM_PORTS]         fs_prts_inp_rp,     // Front end ports input request present.
-    input  line_acc_req [NUM_PORTS]  fs_prts_inp_req,    // Front end ports input request.
-    output logic [NUM_PORTS]         fs_prts_inp_op,     // Front end ports input open.
+    input  logic [NUM_PORTS-1:0]         fs_prts_inp_rp,     // Front end ports input request present.
+    input  line_acc_req [NUM_PORTS-1:0]  fs_prts_inp_req,    // Front end ports input request.
+    output logic [NUM_PORTS-1:0]         fs_prts_inp_op,     // Front end ports input open.
 
     // Request reply.
-    output logic [NUM_PORTS]         fs_prts_oup_rp,     // Front end ports output request present.
-    output line_acc_req [NUM_PORTS]  fs_prts_oup_req,    // Front end ports output request.
-    input logic [NUM_PORTS]          fs_prts_oup_op,     // Front end ports output open.
+    output logic [NUM_PORTS-1:0]         fs_prts_oup_rp,     // Front end ports output request present.
+    output line_acc_req [NUM_PORTS-1:0]  fs_prts_oup_req,    // Front end ports output request.
+    input logic [NUM_PORTS-1:0]          fs_prts_oup_op,     // Front end ports output open.
 
 
     // Input to stage 1 of mem access controller.
@@ -83,12 +83,14 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
 
     // Comb block to handle retirement of requests.
     bit [1:0] rd_rtn_sel;   // Read return path select.
-    bit [$clog2(IFRS_LEN)-1:0] rd_rtn_par_ind;  // Read return parent request index.
+    bit [$clog2(IFRS_LEN):0] rd_rtn_par_ind;  // Read return parent request index.
     always_comb begin
         // Default values.
         fs_prts_oup_rp = 0;
         stg_1_wrp_rp = 0;
         rd_rpl_a = 0;
+        ifr_clrp = 0;
+        //fs_prts_oup_req = 0;
 
         // Check if there is a read returning. If so then handle the retirement of the request.
         if (rd_rpl_p != 0) begin
@@ -130,6 +132,8 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
                 fs_prts_oup_req[ifr_oup[rd_rtn_par_ind].prt] = ifr_oup[rd_rtn_par_ind];
                 fs_prts_oup_req[ifr_oup[rd_rtn_par_ind].prt].dat = stg_1_wrp_req.dat;
 
+                $display("Read request retiring. %t", $time);
+
                 // If the front end port & L1 can both accept the retirement.
                 if (fs_prts_oup_op[ifr_oup[rd_rtn_par_ind].prt] && stg_1_wrp_op) begin
                     // Signal to the front end that we are sending it a reply.
@@ -139,6 +143,11 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
 
                     // Signal to the stage returning the reply that we have it.
                     rd_rpl_a[rd_rtn_sel] = 1;
+
+                    // Signal to the in flight requests buffer that we want to erase the entry.
+                    ifr_clrp[rd_rtn_par_ind] = 1;
+
+                    $display("Read request is retiring successfully. %t", $time);
                 end
             end
             // If the request is not a read type (its a write).
@@ -146,8 +155,18 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
                 // signal to L1 cache that we want to submit a write operation.
                 stg_1_wrp_rp = 1;
 
-                // Signal to the stage that returned us the read reply that its done if stage 1 accepts it.
-                rd_rpl_a[rd_rtn_sel] = stg_1_wrp_op;
+                $display("A write request is attempting to retire, %t", $time);
+
+                // If the L1 stage can accept the write request.
+                if (stg_1_wrp_op) begin
+                    // Signal to the rd rpl path that the return is accepted.
+                    rd_rpl_a[rd_rtn_sel] = 1;
+
+                    // Signal to clear the entry from the in flight requests buffer.
+                    ifr_clrp[rd_rtn_par_ind] = 1;
+
+                    $display("A write request is retired, %t", $time);
+                end
             end
 
             // On the next clock edge, if there is a read reply & the conditions are met to retire it then it will be retired & the rd_rpl_p
@@ -157,11 +176,12 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
 
 
     // Comb block for handling dispatching of requests.
-    bit [$clog2(NUM_PORTS)-1:0] fs_prt_sel;
+    bit [$clog2(NUM_PORTS):0] fs_prt_sel;
     always_comb begin
         // Defaults values.
         fs_prts_inp_op = 0;
         stg_1_rdp_rp = 0;
+        ifr_we = 0;
 
         // Check if the in flights buffer is full or not.
         ifr_full = &ifr_up; // Should be a logical and of the entire packed array which would give 1 if all 1s or 0 otherwise.
@@ -170,16 +190,27 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
         if (fs_prts_inp_rp != 0) begin
 
             // Select a port that wants to submit.
-            for (integer i = 0; i < NUM_PORTS; i = i + 1) begin if (fs_prts_inp_rp) fs_prt_sel = i; end
+            for (integer i = 0; i < NUM_PORTS; i = i + 1) begin if (fs_prts_inp_rp[i]) fs_prt_sel = i; end  // Forgot the [i] for fs_prts_inp_rp and it caused me HOURS of problems :(
 
-            // Create read request to L1 stage.
-            stg_1_rdp_req = fs_prts_inp_req[fs_prt_sel].addr;
 
-            // Signal to L1 cache that we have a new request for it.
-            stg_1_rdp_rp = 1;
+            // If stage 1 can accept the request & the ifrs buffer isnt full.
+            if (stg_1_rdp_op && !ifr_full) begin
+                // Signal to the fs port that the request is to be accepted.
+                fs_prts_inp_op[fs_prt_sel] = 1;
 
-            // Signal to the port that request is accepted if stage 1 read port is open (open means it can accept input on next posedge).
-            fs_prts_inp_op[fs_prt_sel] = stg_1_rdp_op;
+                // Create read request to L1 stage.
+                stg_1_rdp_req = fs_prts_inp_req[fs_prt_sel].addr;
+
+                // Signal to L1 cache that we have a new request for it.
+                stg_1_rdp_rp = 1;
+
+                // Signal to the in flight requests buffer that we want to log the request.
+                ifr_we = 1;
+
+                // Present the request to the ifr buffer.
+                ifr_inp = fs_prts_inp_req[fs_prt_sel];
+                ifr_inp.prt = fs_prt_sel;
+            end
         end
     end
 endmodule
@@ -224,8 +255,8 @@ module mem_acc_l1_stage(
     localparam RD_RP_Q_LEN = 4;
 
     // Read request queue.
-    line_read_req                   rdrq_q_ar;  // Read request queue active request.   
-    logic [$clog2(RD_RQ_Q_LEN)-1:0] rdrq_q_len; // Read request queue length.
+    line_read_req                   rdrq_q_ar;  // Read request queue active request.
+    logic [$clog2(RD_RQ_Q_LEN):0]   rdrq_q_len; // Read request queue length.
     logic                           rdrq_q_we;  // Read request queue write enable.
     logic                           rdrq_q_se;  // Read request queue shift enable.
     fifo_queue #($bits(line_read_req), RD_RQ_Q_LEN) rdrq_q(clk, rst, inp_rdp_req, rdrq_q_ar, rdrq_q_len, rdrq_q_we, rdrq_q_se);
@@ -237,7 +268,7 @@ module mem_acc_l1_stage(
 
     // Write request queue.
     line_write_req                  wrrq_q_ar;  // Write request queue active request.
-    logic [$clog2(WR_RQ_Q_LEN)-1:0] wrrq_q_len; // Write request queue length.
+    logic [$clog2(WR_RQ_Q_LEN):0] wrrq_q_len; // Write request queue length.
     logic                           wrrq_q_we;  // Write request queue write enable.
     logic                           wrrq_q_se;  // Write request queue shift enable.
     fifo_queue #($bits(line_write_req), WR_RQ_Q_LEN) wrrq_q(clk, rst, inp_wrp_req, wrrq_q_ar, wrrq_q_len, wrrq_q_we, wrrq_q_se);
@@ -250,7 +281,7 @@ module mem_acc_l1_stage(
     // Read reply queue.
     line_read_reply                 rdrply_q_ar;    // Read reply queue active request.
     line_read_reply                 rdrply_q_inp;   // Read reply queue input.
-    logic [$clog2(RD_RP_Q_LEN)-1:0] rdrply_q_len;   // Read reply queue length.
+    logic [$clog2(RD_RP_Q_LEN):0] rdrply_q_len;   // Read reply queue length.
     logic                           rdrply_q_we;    // Read reply queue write enable.
     logic                           rdrply_q_se;    // Read reply queue shift enable.
     fifo_queue #($bits(line_read_reply), RD_RP_Q_LEN) rdrp_q(clk, rst, rdrply_q_inp, rdrply_q_ar, rdrply_q_len, rdrply_q_we, rdrply_q_se);
@@ -293,6 +324,8 @@ module mem_acc_l1_stage(
         wrrq_q_se = 0;
         rdrq_q_se = 0;
         rdrply_q_we = 0;
+        oup_rdp_rp = 0;
+        oup_wrp_rp = 0;
 
         // If there is a write request present in the queue.
         if (wrrq_q_len != 0) begin
@@ -406,7 +439,7 @@ module mem_acc_l2_stage(
 
     // Read request queue.
     line_read_req                   rdrq_q_ar;  // Read request queue active request.   
-    logic [$clog2(RD_RQ_Q_LEN)-1:0] rdrq_q_len; // Read request queue length.
+    logic [$clog2(RD_RQ_Q_LEN):0]   rdrq_q_len; // Read request queue length.
     logic                           rdrq_q_we;  // Read request queue write enable.
     logic                           rdrq_q_se;  // Read request queue shift enable.
     fifo_queue #($bits(line_read_req), RD_RQ_Q_LEN) rdrq_q(clk, rst, inp_rdp_req, rdrq_q_ar, rdrq_q_len, rdrq_q_we, rdrq_q_se);
@@ -418,7 +451,7 @@ module mem_acc_l2_stage(
 
     // Write request queue.
     line_write_req                  wrrq_q_ar;  // Write request queue active request.
-    logic [$clog2(WR_RQ_Q_LEN)-1:0] wrrq_q_len; // Write request queue length.
+    logic [$clog2(WR_RQ_Q_LEN):0] wrrq_q_len; // Write request queue length.
     logic                           wrrq_q_we;  // Write request queue write enable.
     logic                           wrrq_q_se;  // Write request queue shift enable.
     fifo_queue #($bits(line_write_req), WR_RQ_Q_LEN) wrrq_q(clk, rst, inp_wrp_req, wrrq_q_ar, wrrq_q_len, wrrq_q_we, wrrq_q_se);
@@ -431,7 +464,7 @@ module mem_acc_l2_stage(
     // Read reply queue.
     line_read_reply                 rdrply_q_ar;    // Read reply queue active request.
     line_read_reply                 rdrply_q_inp;   // Read reply queue input.
-    logic [$clog2(RD_RP_Q_LEN)-1:0] rdrply_q_len;   // Read reply queue length.
+    logic [$clog2(RD_RP_Q_LEN):0] rdrply_q_len;   // Read reply queue length.
     logic                           rdrply_q_we;    // Read reply queue write enable.
     logic                           rdrply_q_se;    // Read reply queue shift enable.
     fifo_queue #($bits(line_read_reply), RD_RP_Q_LEN) rdrp_q(clk, rst, rdrply_q_inp, rdrply_q_ar, rdrply_q_len, rdrply_q_we, rdrply_q_se);
@@ -463,7 +496,7 @@ module mem_acc_l2_stage(
 
     l2_cache #(8, 256, 16, 32) l1(clk, rst, cache_rdp_addr, cache_rdp_en, cache_rdp_dat, cache_rdp_done, cache_rdp_suc,
                                   cache_wrp_addr, cache_wrp_en, cache_wrp_dat, cache_wrp_done, cache_wrp_suc,
-                                  cache_bs_adr, cache_bs_dat, cache_bs_en, cache_bs_done);
+                                  cache_bs_addr, cache_bs_dat, cache_bs_en, cache_bs_done);
 
     // Comb block to handle dispatching write & read requests.
     always_comb begin
@@ -600,7 +633,7 @@ module mem_acc_noc_stage(
 
     // Read request queue.
     line_read_req                   rdrq_q_ar;  // Read request queue active request.   
-    logic [$clog2(RD_RQ_Q_LEN)-1:0] rdrq_q_len; // Read request queue length.
+    logic [$clog2(RD_RQ_Q_LEN):0]   rdrq_q_len; // Read request queue length.
     logic                           rdrq_q_we;  // Read request queue write enable.
     logic                           rdrq_q_se;  // Read request queue shift enable.
     fifo_queue #($bits(line_read_req), RD_RQ_Q_LEN) rdrq_q(clk, rst, inp_rdp_req, rdrq_q_ar, rdrq_q_len, rdrq_q_we, rdrq_q_se);
@@ -612,7 +645,7 @@ module mem_acc_noc_stage(
 
     // Write request queue.
     line_write_req                  wrrq_q_ar;  // Write request queue active request.
-    logic [$clog2(WR_RQ_Q_LEN)-1:0] wrrq_q_len; // Write request queue length.
+    logic [$clog2(WR_RQ_Q_LEN):0]   wrrq_q_len; // Write request queue length.
     logic                           wrrq_q_we;  // Write request queue write enable.
     logic                           wrrq_q_se;  // Write request queue shift enable.
     fifo_queue #($bits(line_write_req), WR_RQ_Q_LEN) wrrq_q(clk, rst, inp_wrp_req, wrrq_q_ar, wrrq_q_len, wrrq_q_we, wrrq_q_se);
@@ -625,7 +658,7 @@ module mem_acc_noc_stage(
     // Read reply queue.
     line_read_reply                 rdrply_q_ar;    // Read reply queue active request.
     line_read_reply                 rdrply_q_inp;   // Read reply queue input.
-    logic [$clog2(RD_RP_Q_LEN)-1:0] rdrply_q_len;   // Read reply queue length.
+    logic [$clog2(RD_RP_Q_LEN):0]  rdrply_q_len;   // Read reply queue length.
     logic                           rdrply_q_we;    // Read reply queue write enable.
     logic                           rdrply_q_se;    // Read reply queue shift enable.
     fifo_queue #($bits(line_read_reply), RD_RP_Q_LEN) rdrp_q(clk, rst, rdrply_q_inp, rdrply_q_ar, rdrply_q_len, rdrply_q_we, rdrply_q_se);
@@ -651,7 +684,6 @@ module mem_acc_noc_stage(
     // If 1 assign write req, if 0 assign read req.
     assign noc_port.tx_dat.dat = snd_r_or_w ? mem_wr : mem_rr;
 
-    // ***SOMETHING ABOUT THIS IS BAD, IDK WHAT BUT I HAVE INTERVIEW SOON SO CANT WORK ON IT, PLS REMEMBER THIS.***
     // Logic to handle sending requests (read & write) to main memory.
     always_comb begin
         // Default values.
@@ -666,7 +698,7 @@ module mem_acc_noc_stage(
             // Present the request to the noc port.
             noc_port.tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
             noc_port.tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
-            noc_port.tx_dat.hdr.len = $bits(noc_packet_header) + $bits(mem_wr_rq);
+            noc_port.tx_dat.hdr.len = $bits(noc_port.tx_dat.hdr) + $bits(mem_wr);
             mem_wr.addr = wrrq_q_ar.addr;
             mem_wr.dat = wrrq_q_ar.dat;
             mem_wr.pt = memory_write_request;
@@ -686,7 +718,7 @@ module mem_acc_noc_stage(
             // Present the request to the noc port.
             noc_port.tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
             noc_port.tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
-            noc_port.tx_dat.hdr.len = $bits(noc_packet_header) + $bits(mem_rd_rq);
+            noc_port.tx_dat.hdr.len = $bits(noc_port.tx_dat.hdr) + $bits(mem_rr);
             mem_rr.addr = rdrq_q_ar;
             mem_rr.pt = memory_read_request;
 
@@ -695,7 +727,10 @@ module mem_acc_noc_stage(
                 noc_port.tx_av = 1;
 
                 // If the noc port will accept the request on next clock, then shift the read request queue.
-                rdrq_q_se = noc_port.tx_re;
+                if (noc_port.tx_re) begin
+                    rdrq_q_se = 1;
+                end
+                else rdrq_q_se = 0;
             end
         end
     end
@@ -726,11 +761,11 @@ module mem_acc_noc_stage(
             // If the packet is a read reply.
             if (noc_port.rx_dat.dat[7:0] == memory_read_reply) begin
                 // Present data to the read reply queue.
-                rdrply_q_inp.addr = noc_port.rx_dat.dat[8+:32];     // Pass the address data.
-                rdrply_q_inp.dat = noc_port.rx_dat.dat[40+:128];    // Pass the line data.
+                rdrply_q_inp.addr = noc_port.rx_dat.dat[136+:32];     // Pass the address data.
+                rdrply_q_inp.dat = noc_port.rx_dat.dat[8+:128];    // Pass the line data.
 
                 // If there is room to shift into the read reply queue.
-                if (rdrply_q_len != RD_RP_Q_LEN) begin
+                if (rdrply_q_len < RD_RP_Q_LEN) begin
                     // Signal to the read reply queue that data is available.
                     rdrply_q_we = 1;
                     // Signal to the noc port that we have read the rx.
@@ -750,14 +785,14 @@ module mem_acc_cont #(parameter NUM_PORTS = 2)(
     // Front end (core side) ports that requests are submitted to and replied from.
        
     // Request submission.
-    input  logic [NUM_PORTS]         fs_prts_inp_rp,    // Front end ports input request present.
-    input  line_acc_req [NUM_PORTS]  fs_prts_inp_req,   // Front end ports input request.
-    output logic [NUM_PORTS]         fs_prts_inp_op,    // Front end ports input open.
+    input  logic [NUM_PORTS-1:0]         fs_prts_inp_rp,    // Front end ports input request present.
+    input  line_acc_req [NUM_PORTS-1:0]  fs_prts_inp_req,   // Front end ports input request.
+    output logic [NUM_PORTS-1:0]         fs_prts_inp_op,    // Front end ports input open.
 
     // Request reply.
-    output logic [NUM_PORTS]         fs_prts_oup_rp,    // Front end ports output request present.
-    output line_acc_req [NUM_PORTS]  fs_prts_oup_req,   // Front end ports output request.
-    input logic [NUM_PORTS]          fs_prts_oup_op,    // Front end ports output open.
+    output logic [NUM_PORTS-1:0]         fs_prts_oup_rp,    // Front end ports output request present.
+    output line_acc_req [NUM_PORTS-1:0]  fs_prts_oup_req,   // Front end ports output request.
+    input logic [NUM_PORTS-1:0]          fs_prts_oup_op,    // Front end ports output open.
 
 
     // Back end (noc side) port to interfave with the NOC.
@@ -795,7 +830,7 @@ module mem_acc_cont #(parameter NUM_PORTS = 2)(
 
     mem_acc_l1_stage l1_cache(clk, rst, 
     stg_1_rdp_rp, stg_1_rdp_req, stg_1_rdp_op, stg_1_wrp_rp, stg_1_wrp_req, stg_1_wrp_op,
-    stg_2_rdp_rp, stg_2_rdp_req, st_2_rdp_op, stg_2_wrp_rp, stg_2_wrp_req, stg_2_wrp_op,
+    stg_2_rdp_rp, stg_2_rdp_req, stg_2_rdp_op, stg_2_wrp_rp, stg_2_wrp_req, stg_2_wrp_op,
     rd_rpl_p[0], rd_rpl[0], rd_rpl_a[0]);
 
 
@@ -810,14 +845,14 @@ module mem_acc_cont #(parameter NUM_PORTS = 2)(
 
     mem_acc_l2_stage l2_cache(clk, rst, 
     stg_2_rdp_rp, stg_2_rdp_req, stg_2_rdp_op, stg_2_wrp_rp, stg_2_wrp_req, stg_2_wrp_op,
-    stg_3_rdp_rp, stg_3_rdp_req, st_3_rdp_op, stg_3_wrp_rp, stg_3_wrp_req, stg_3_wrp_op,
+    stg_3_rdp_rp, stg_3_rdp_req, stg_3_rdp_op, stg_3_wrp_rp, stg_3_wrp_req, stg_3_wrp_op,
     rd_rpl_p[1], rd_rpl[1], rd_rpl_a[1]);
 
 
     // NOC interface stage.
 
     mem_acc_noc_stage noc_stage(clk, rst,
-    stg_3_rdp_rp, stg_2_rdp_req, stg_3_rdp_op, stg_3_wrp_rp, stg_3_wrp_req, sth_3_wrp_op,
+    stg_3_rdp_rp, stg_3_rdp_req, stg_3_rdp_op, stg_3_wrp_rp, stg_3_wrp_req, stg_3_wrp_op,
     noc_port,
     rd_rpl_p[2], rd_rpl[2], rd_rpl_a[2]);
 
