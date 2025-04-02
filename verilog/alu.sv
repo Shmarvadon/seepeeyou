@@ -57,8 +57,8 @@ always_comb begin
         // Case of an immediate being present.
         4'b1100:
         begin
-            op_a <= gpr_oup[inst[11:8]];
-            op_b <= inst[47:16];
+            op_a <= inst[47:16];
+            op_b <= gpr_oup[inst[11:8]];
             gpr_inp[inst[11:8]] <= result;
 
             // If the instruction wants to write back the result.
@@ -99,7 +99,7 @@ always_comb begin
                 4'b1010: begin result <= op_a ^ op_b;       rwe <= 1; end // XOR
                 4'b0110: begin result <= ~op_a;             rwe <= 1; end // NOT
                 4'b1110: begin result <= op_a * op_b;       rwe <= 1; end // MUL
-                4'b0001: begin result <= op_a;              rwe <= 1; end // MOV
+                4'b0001: begin result <= op_a;              rwe <= 1; end // MOV            THIS CAUSED ME 3 DAYS OF LOST PROGRESS THINKING MY HANDWRITTEN MACHINE CODE WAS WRONG.
                 4'b1001: begin result <= op_b - op_a;       rwe <= 0; end // CMP
                 4'b0101: begin result <= {op_a[30:0], 0};   rwe <= 1; end // RLS
                 4'b1101: begin result <= {0, op_a[30:0]};   rwe <= 1; end // RRS

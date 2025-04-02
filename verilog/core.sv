@@ -15,12 +15,12 @@ module core(
     bit sbp_we;
     bit [31:0] sbp_inp;
     bit [31:0] sbp_oup;
-    register #(32, 'hFFFF) sbp_reg(clk, rst, sbp_inp, sbp_oup, sbp_we);
+    register #(32, 'h000FFFFF) sbp_reg(clk, rst, sbp_inp, sbp_oup, sbp_we);
 
     bit shp_we;
     bit [31:0] shp_inp;
     bit [31:0] shp_oup;
-    register #(32, 'hFFFF) shp_reg(clk, rst, shp_inp, shp_oup, shp_we);
+    register #(32, 'h000FFFFF) shp_reg(clk, rst, shp_inp, shp_oup, shp_we);
 
 
     /*          NOC stop            */

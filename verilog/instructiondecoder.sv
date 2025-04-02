@@ -290,12 +290,17 @@ module instruction_decoder #(parameter INST_QUEUE_LEN = 64, INP_LEN = 16)(
         // Incriment the dbba by however many bytes are shifted out.
         dbba <= dbba + db_sa;
 
+    end
+
+    always_comb begin
+        
         if (mdfy_pc) begin
             ht_rst <= 1;
         end
 
         if (ht_rst) ht_rst <= 0;
     end
+
     // Handle driving module reset from either ht_rst or rst_inp.
     always_comb begin
         rst <= ht_rst | rst_inp;

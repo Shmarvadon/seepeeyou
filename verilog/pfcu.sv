@@ -38,6 +38,8 @@ always_comb begin
 
             $display("Executing PFCU JMP k instruction");
 
+            // If the instruction is the infinite loop thing, stop.
+            if (instruction.inst[39:0] == 40'b0000_0000_0000_0000_0000_0000_1011_1001_0000_1110) $stop;
             // Present the new PC value.
             new_pc_val <= instruction.inst[47:8];
 
@@ -54,13 +56,17 @@ always_comb begin
 
             $display("Executing PFCU JIZ k instruction");
 
+            
+
             // check if ALU status[0] is set or not.
             if (alu_status[0]) begin
                 // Signal that we are going to modify the program counter.
                 mdfy_pc <= 1;
 
                 // Present addr of next instruction.
-                new_pc_val <= instruction.inst[47:8];
+                new_pc_val <= instruction.inst[8+:32];
+
+                //if (instruction.inst[39:0] == 40'b0000_0000_0000_0000_0001_0000_0011_1100_1000_1110) $stop;
             end
             // If alu status is not set.
             else begin
@@ -75,7 +81,7 @@ always_comb begin
         // GOT k
         5'b01001:
         begin
-            $display("Executing a PFCU GOT k instruction");
+            $display("Executing a PFCU GOT %d instruction", instruction.inst[8+:32]);
 
             // Do the work but dont evaluate conditions for progressing to next stage.
             case(mcics) 
@@ -214,6 +220,9 @@ always @(posedge clk) begin
                 // If the port is open and the NOC replies tx_complete then we can move onto next stage.
                 if (noc_port.to_noc_prt_stat == port_open && noc_port.tx_complete) begin
                     mcics <= mcics + 1;
+
+                    // This triggers when the matmul program is complete.
+                    if (instruction.inst[39:0] == 40'b0000_0000_0000_0000_0001_0000_0001_0011_0100_1110) $stop;
                 end
             end
             // Wait for reply to come back.

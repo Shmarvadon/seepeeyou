@@ -86,11 +86,61 @@ always_comb begin
             endcase
         end
 
-        // STR k, A
+        // LOD A, B
+        5'b11001:
+        begin
+            $display("Executing M&IO LOD A, B instruction, %t", $time);
+
+            // Do the work but dont handle transitioning state.
+            case(mcics)
+            // Submit tx to read in data.
+            0:
+            begin
+                // Submit the tx request.
+                submit_tx <= 1;
+
+                // signal done is 0.
+                done <= 0;
+                
+                // Construct packet to send over NOC.
+                tx_packet.dst_addr <= 2;
+                tx_packet.dst_prt <= 0;
+                tx_packet.src_addr <= noc_port.port_address;
+                tx_packet.src_prt <= noc_port.port_number;
+                tx_packet.id <= 0;
+                tx_packet.pt <= memory_read_request;
+                tx_packet.dat[31:0] <= gpr_oup[instruction.inst[11:8]]; // Location to read from.
+                tx_packet.dat[127:32] <= 0;
+            end
+
+            // Wait for reply.
+            1:
+            begin
+                // Stop asking to submit a tx.
+                submit_tx <= 0;
+
+                // If we have an rx waiting for us and its a memory read reply.
+                if (noc_port.rx_recieve && noc_port.dat_from_noc.pt == memory_read_reply) begin
+
+                    // Signal that we have completed the rx.
+                    complete_rx <= 1;
+
+                    //prepare to write the value to gprs.
+                    gpr_inp[instruction.inst[15:12]] <= noc_port.dat_from_noc.dat[31:0];
+                    gpr_we[instruction.inst[15:12]] <= 1;
+
+                    // Signal done.
+                    done <= 1;
+                end
+            end
+            endcase
+        end
+
+        // STR A, k
         5'b10000:
         begin
 
-            $display("Executing M&IO STR k, A instruction, %t", $time);
+            $display("Executing M&IO STR A, k instruction, %t", $time);
 
             // Do the work here but dont handle transitioning state.
             case (mcics) 
@@ -108,6 +158,46 @@ always_comb begin
                 tx_packet.id <= 0;
                 tx_packet.pt <= memory_write_request;
                 tx_packet.dat[31:0] <= instruction.inst[47:16]; // Location to write to.
+                tx_packet.dat[63:32] <= gpr_oup[instruction.inst[11:8]]; // load in the data from GPR that is to be written to memory.
+                tx_packet.dat[127:64] <= 0;
+            end
+            // Wait for reply to confirm success of write.
+            1:
+            begin
+                // If there is a reply waiting for us & its the one we want.
+                if (noc_port.rx_recieve && noc_port.dat_from_noc.pt == memory_write_reply) begin
+                    // signal that the rx has been recieved.
+                    complete_rx <= 1;
+
+                    // Signal that we are done.
+                    done <= 1;
+                end
+            end
+            endcase
+        end
+
+        // STR A, B
+        5'b01001:
+        begin
+            
+            $display("Executing M&IO STR A, B instruction, A = %d, B = %d  %t", gpr_oup[instruction.inst[11:8]], gpr_oup[instruction.inst[15:12]], $time);
+
+            // Do the work here but dont handle transitioning state.
+            case (mcics) 
+            // submit tx to write data to memory.
+            0:
+            begin
+                // Signal that the tx has been submitted.
+                submit_tx <= 1;
+
+                // Construct packet to send over NOC.
+                tx_packet.dst_addr <= 2;
+                tx_packet.dst_prt <= 0;
+                tx_packet.src_addr <= noc_port.port_address;
+                tx_packet.src_prt <= noc_port.port_number;
+                tx_packet.id <= 0;
+                tx_packet.pt <= memory_write_request;
+                tx_packet.dat[31:0] <=  gpr_oup[instruction.inst[15:12]]; // GPR containing address to write to.
                 tx_packet.dat[63:32] <= gpr_oup[instruction.inst[11:8]]; // load in the data from GPR that is to be written to memory.
                 tx_packet.dat[127:64] <= 0;
             end
@@ -278,8 +368,54 @@ always @(posedge clk) begin
         endcase
     end
 
+    // LOD A, B
+    5'b11001:
+    begin
+        case (mcics)
+        // Beginning.
+        0:
+        begin
+            // If the port is open and the NOC replies tx_complete then we can move onto next stage.
+            if (noc_port.to_noc_prt_stat == port_open && noc_port.tx_complete) begin
+                mcics <= mcics + 1;
+            end
+        end
+        // Wait for reply to come back.
+        1:
+        begin
+            // If the NOC signals that it has an rx for us.
+            if (noc_port.rx_recieve && noc_port.dat_from_noc.pt == memory_read_reply) begin
+                mcics <= 0;
+            end
+        end
+        endcase
+    end
+
     // STR k, A
     5'b10000:
+    begin
+        case (mcics)
+        // Beginning.
+        0:
+        begin
+            // If the port is open and the NOC replies tx_complete then we can move onto next stage.
+            if (noc_port.to_noc_prt_stat == port_open && noc_port.tx_complete) begin
+                mcics <= mcics + 1;
+            end
+        end
+        // Wait for reply to come back.
+        1:
+        begin
+            // If the NOC signals that it has an rx for us.
+            if (noc_port.rx_recieve && noc_port.dat_from_noc.pt == memory_write_reply) begin
+                mcics <= 0;
+            end
+        end
+        endcase
+    end
+
+    // STR A, B
+    5'b01001:
     begin
         case (mcics)
         // Beginning.
