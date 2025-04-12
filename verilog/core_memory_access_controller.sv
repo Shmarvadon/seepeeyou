@@ -1,34 +1,8 @@
 `include "defines.svh"
-`include "structs.sv"
+`include "structs.svh"
 
 // Each cache is 2 port: 1 read, 1 write.
 // Each cache has a seperate read & write queue.
-
-// Struct to store the currently active requests.
-typedef struct packed {
-    logic [31:0]    addr;   // Request address.
-    logic [127:0]   dat;    // Request data.
-    logic [15:0]    wmsk;   // Request write mask.
-    logic           rqt;    // Request type (0 = read, 1 = write).
-    logic [3:0]     prt;    // Request origin port.
-} line_acc_req;
-
-// Struct to pass a line read request.
-typedef struct packed {
-    logic [31:0] addr;
-} line_read_req;
-
-// Struct to pass a line read reply.
-typedef struct packed {
-    logic [31:0] addr;
-    logic [127:0] dat;
-} line_read_reply;
-
-// Struct to pass line write request.
-typedef struct packed {
-    logic [31:0] addr;
-    logic [127:0] dat;
-} line_write_req;
 
 // Memory access controller scheduler stage.
 module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
@@ -608,23 +582,31 @@ module mem_acc_noc_stage(
     // Inputs to this stage.
 
     // Read port.
-    input logic            inp_rdp_rp,   // Read port request present.
-    input line_read_req    inp_rdp_req,  // Read port request.
-    output logic           inp_rdp_op,   // Read port open.
+    input   logic           inp_rdp_rp,   // Read port request present.
+    input   line_read_req   inp_rdp_req,  // Read port request.
+    output  logic           inp_rdp_op,   // Read port open.
 
     // Write port.
-    input logic            inp_wrp_rp,   // Write port request present.
-    input line_write_req   inp_wrp_req,  // Write port request.
-    output logic           inp_wrp_op,   // Write port open.
+    input   logic           inp_wrp_rp,   // Write port request present.
+    input   line_write_req  inp_wrp_req,  // Write port request.
+    output  logic           inp_wrp_op,   // Write port open.
 
-    // Outputs from this stage.
+    // Interface with NIU.
+    input   logic [3:0]     prt_addr,
+    input   logic [3:0]     prt_num,
 
-    noc_ip_port.ip_side noc_port,
+    input   logic           rx_av,
+    output  logic           rx_re,
+    input   noc_packet      rx_dat,
+
+    output  logic           tx_av,
+    input   logic           tx_re,
+    output  noc_packet      tx_dat,
 
     // Return channel for completed requests.
-    output logic rd_rpl_p,
-    output line_read_reply rd_rpl,
-    input logic rd_rpl_a
+    output  logic           rd_rpl_p,
+    output  line_read_reply rd_rpl,
+    input   logic           rd_rpl_a
 );
 
     localparam RD_RQ_Q_LEN = 4;
@@ -672,8 +654,8 @@ module mem_acc_noc_stage(
 
 
     //          NOC stuff
-    assign noc_port.tx_dat.hdr.src_addr = noc_port.prt_addr;
-    assign noc_port.tx_dat.hdr.src_port = noc_port.prt_num;
+    assign tx_dat.hdr.src_addr = noc_port.prt_addr;
+    assign tx_dat.hdr.src_port = noc_port.prt_num;
 
     bit snd_r_or_w = 0; // 0 means send read, 1 means send write.
 
@@ -682,12 +664,12 @@ module mem_acc_noc_stage(
     mem_wr_rq mem_wr;
 
     // If 1 assign write req, if 0 assign read req.
-    assign noc_port.tx_dat.dat = snd_r_or_w ? mem_wr : mem_rr;
+    assign tx_dat.dat = snd_r_or_w ? mem_wr : mem_rr;
 
     // Logic to handle sending requests (read & write) to main memory.
     always_comb begin
         // Default values.
-        noc_port.tx_av = 0;
+        tx_av = 0;
 
         wrrq_q_se = 0;
         rdrq_q_se = 0;
@@ -696,19 +678,19 @@ module mem_acc_noc_stage(
         if (snd_r_or_w) begin
 
             // Present the request to the noc port.
-            noc_port.tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
-            noc_port.tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
-            noc_port.tx_dat.hdr.len = $bits(noc_port.tx_dat.hdr) + $bits(mem_wr);
+            tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
+            tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
+            tx_dat.hdr.len = $bits(tx_dat.hdr) + $bits(mem_wr);
             mem_wr.addr = wrrq_q_ar.addr;
             mem_wr.dat = wrrq_q_ar.dat;
             mem_wr.pt = memory_write_request;
 
             // Signal that the request is present if one actually is.
             if (wrrq_q_len != 0) begin
-                noc_port.tx_av = 1;
+                tx_av = 1;
 
                 // If the noc port will accept the request on next clock, then shift the write request queue.
-                wrrq_q_se = noc_port.tx_re;
+                wrrq_q_se = tx_re;
             end
         end
 
@@ -716,18 +698,18 @@ module mem_acc_noc_stage(
         else begin
 
             // Present the request to the noc port.
-            noc_port.tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
-            noc_port.tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
-            noc_port.tx_dat.hdr.len = $bits(noc_port.tx_dat.hdr) + $bits(mem_rr);
+            tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
+            tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
+            tx_dat.hdr.len = $bits(tx_dat.hdr) + $bits(mem_rr);
             mem_rr.addr = rdrq_q_ar;
             mem_rr.pt = memory_read_request;
 
             // Signal that the request is present if one actually is.
             if (rdrq_q_len != 0) begin
-                noc_port.tx_av = 1;
+                tx_av = 1;
 
                 // If the noc port will accept the request on next clock, then shift the read request queue.
-                if (noc_port.tx_re) begin
+                if (tx_re) begin
                     rdrq_q_se = 1;
                 end
                 else rdrq_q_se = 0;
@@ -753,16 +735,16 @@ module mem_acc_noc_stage(
     // Logic to handle recieveing replies from the NOC.
     always_comb begin
         // Default values.
-        noc_port.rx_re = 0;
+        rx_re = 0;
         rdrply_q_we = 0;
 
         // If the noc port has an rx for us.
-        if (noc_port.rx_av) begin
+        if (rx_av) begin
             // If the packet is a read reply.
-            if (noc_port.rx_dat.dat[7:0] == memory_read_reply) begin
+            if (rx_dat.dat[7:0] == memory_read_reply) begin
                 // Present data to the read reply queue.
-                rdrply_q_inp.addr = noc_port.rx_dat.dat[136+:32];     // Pass the address data.
-                rdrply_q_inp.dat = noc_port.rx_dat.dat[8+:128];    // Pass the line data.
+                rdrply_q_inp.addr = rx_dat.dat[136+:32];     // Pass the address data.
+                rdrply_q_inp.dat = rx_dat.dat[8+:128];    // Pass the line data.
 
                 // If there is room to shift into the read reply queue.
                 if (rdrply_q_len < RD_RP_Q_LEN) begin
@@ -795,9 +777,17 @@ module mem_acc_cont #(parameter NUM_PORTS = 2)(
     input logic [NUM_PORTS-1:0]          fs_prts_oup_op,    // Front end ports output open.
 
 
-    // Back end (noc side) port to interfave with the NOC.
+    // Interface with NIU.
+    input   logic [3:0]     prt_addr,
+    input   logic [3:0]     prt_num,
 
-    noc_ip_port.ip_side             noc_port            // Noc interface port.
+    input   logic           rx_av,
+    output  logic           rx_re,
+    input   noc_packet      rx_dat,
+
+    output  logic           tx_av,
+    input   logic           tx_re,
+    output  noc_packet      tx_dat
 );
 
     // request scheduler stage.
@@ -853,7 +843,7 @@ module mem_acc_cont #(parameter NUM_PORTS = 2)(
 
     mem_acc_noc_stage noc_stage(clk, rst,
     stg_3_rdp_rp, stg_3_rdp_req, stg_3_rdp_op, stg_3_wrp_rp, stg_3_wrp_req, stg_3_wrp_op,
-    noc_port,
+    prt_addr, prt_num, rx_av, rx_re, rx_dat, tx_av, tx_re, tx_dat,
     rd_rpl_p[2], rd_rpl[2], rd_rpl_a[2]);
 
 endmodule

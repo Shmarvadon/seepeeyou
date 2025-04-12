@@ -86,6 +86,193 @@ module fifo_queue #(parameter WIDTH, LENGTH)(
     end
 endmodule
 
+module fifo_sr #(parameter WIDTH, DEPTH, HEADS, TAILS)(
+    input logic clk,
+    input logic rst,
+
+    // Source signals.
+    input logic  [HEADS-1:0]                push,
+    input logic  [HEADS-1:0][WIDTH-1:0]     dinp,
+    output logic [$clog2(DEPTH):0]          src_num_avail,
+
+    // Destination signals.
+    input logic  [TAILS-1:0]                pop,
+    output logic [TAILS-1:0][WIDTH-1:0]     doup,
+    output logic [$clog2(DEPTH):0]          dst_num_avail
+);
+    // Check that parameters are required values.
+
+    // Ensure that DEPTH parameter is a power of 2.
+    generate
+    if (DEPTH & (DEPTH - 1)) $error("Depth must be power of 2.");
+    endgenerate
+
+    // Head side variables.
+    logic [$clog2(DEPTH):0]         wptr;
+
+    // Tail side variables.
+    logic [$clog2(DEPTH):0]         rptr;
+
+    // Global variables.
+    logic [DEPTH-1:0][WIDTH-1:0]    data;
+
+    // Logic to handle pushing & popping the shift reg.
+    logic [$clog2(DEPTH):0]         rptr_tmp;
+    always @(posedge clk) begin
+
+        // Loop over each of the push ports.
+        for (int i = 0; i < HEADS; i = i + 1) begin
+            if (push[i]) begin
+                // If the shift register is not full.
+                if (!(wptr[$clog2(DEPTH)-1:0] == rptr[$clog2(DEPTH)-1:0] && wptr[$clog2(DEPTH)] != rptr[$clog2(DEPTH)])) begin
+                    // Push the data.
+                    data[wptr[$clog2(DEPTH)-1:0]] <= dinp[i];
+
+                    // Incriment the wptr.
+                    wptr = wptr + 1;
+                end
+            end
+        end
+
+        // Update the number of entries that are unoccupied.
+        src_num_avail <= (rptr[$clog2(DEPTH)] == wptr[$clog2(DEPTH)]) ? (DEPTH - (wptr[$clog2(DEPTH)-1:0] - rptr[$clog2(DEPTH)-1:0])) : (DEPTH - (wptr[$clog2(DEPTH)-1:0] + DEPTH - rptr[$clog2(DEPTH)-1:0]));
+
+
+
+        // Loop over each of the pop ports.
+        for (int i = 0; i < TAILS; i = i + 1) begin
+            // If the position wants to pop & the sr is not empty.
+            if (pop[i] & rptr != wptr) begin
+                // Incriment the rptr.
+                rptr = rptr + 1;
+            end
+        end
+
+        // Loop over each of the pop ports to present data to them.
+        rptr_tmp = rptr;
+        for (int i = 0; i < TAILS; i = i + 1) begin
+            // if not empty.
+            if (rptr_tmp != wptr) begin
+                // Present the data.
+                doup[i] <= data[rptr_tmp[$clog2(DEPTH)-1:0]];
+
+                // Incriment rptr_tmp.
+                rptr_tmp = rptr_tmp + 1;
+            end
+        end
+
+        // Update the number of entries that are occupied.
+        dst_num_avail <= (rptr[$clog2(DEPTH)] == wptr[$clog2(DEPTH)]) ? (wptr[$clog2(DEPTH)-1:0] - rptr[$clog2(DEPTH)-1:0]) : (wptr[$clog2(DEPTH)-1:0] + DEPTH - rptr[$clog2(DEPTH)-1:0]);
+    end
+endmodule
+
+module cdc_fifo_sr #(parameter WIDTH, DEPTH, localparam DL2 = $clog2(DEPTH))(
+    input logic                 sclk,               // Source clock.
+    input logic                 srst,               // Source reset.
+    input logic                 dclk,               // Destination clock.
+    input logic                 drst,               // Destination reset.
+
+    // source clock signals.
+    input logic [WIDTH-1:0]     dinp,               // Data input
+    input logic                 push,               // Push.
+    output logic [DL2:0]        src_num_avail,      // Source number available.
+    output logic                src_full,           // Source full.
+
+
+    // destination clock signals.
+    output logic [WIDTH-1:0]    doup,               // Data output.
+    input logic                 pop,                // Pop.
+    output logic [DL2:0]        dst_num_avail,      // Destination number available.
+    output logic                dst_empty           // Destination empty.
+);
+
+    // Ensure that DEPTH parameter is a power of 2.
+    generate
+    if (DEPTH & (DEPTH - 1)) $error("Depth must be power of 2.");
+    endgenerate
+
+    // Push side variables.
+    logic [DL2:0]   wptr;
+    logic [DL2:0]   rptr_fs;
+
+    // Pop side variables.
+    logic [DL2:0]   rptr;
+    logic [DL2:0]   wptr_bs;
+
+    // Some gray code variables for CDC.
+    logic [DL2:0]   wptr_bs_gray;
+    logic [DL2:0]   wptr_fs_gray;
+
+    logic [DL2:0]   rptr_bs_gray;
+    logic [DL2:0]   rptr_fs_gray;
+
+    // Global variables.
+    logic [DEPTH-1:0][WIDTH-1:0] data;
+
+
+    // Logic to handle pushing stuff.
+    always @(posedge sclk) begin : push_side
+
+        // Update front side rptr from the graycode value.
+        for (int i = 0; i <= DL2; i = i + 1) begin
+            rptr_fs[i] = ^(rptr_fs_gray >> i);
+        end
+
+        // If the push side wants to write.
+        if (push) begin
+            // Check that the sr is not full.
+            if (!(wptr[DL2-1:0] == rptr_fs[DL2-1:0] && wptr[DL2] != rptr_fs[DL2])) begin
+                // Write the data to the register.
+                data[wptr[DL2-1:0]] <= dinp;
+                // Incriment wptr.
+                wptr = wptr + 1;
+            end
+        end
+
+        // Set the full condition.
+        src_full <= (wptr[DL2-1:0] == rptr_fs[DL2-1:0] && wptr[DL2] != rptr_fs[DL2]);
+
+        // Set the source number available value.
+        src_num_avail <= (rptr_fs[DL2] == wptr[DL2]) ? (DEPTH - (wptr[DL2-1:0] - rptr_fs[DL2-1:0])) : (DEPTH - (wptr[DL2-1:0] + DEPTH - rptr_fs[DL2-1:0]));
+
+        // Update the graycode value of wptr on the front side.
+        wptr_fs_gray <= wptr ^(wptr >> 1);
+        // Update the graycode value of rptr on the front side.
+        rptr_fs_gray <= rptr_bs_gray;
+    end
+
+    // Logic to handle popping stuff.
+    always @(posedge dclk) begin : pop_side
+
+        // Update back side wptr from the graycode value.
+        for (int i = 0; i <= DL2; i = i + 1) begin
+            wptr_bs[i] = ^(wptr_bs_gray >> i);
+        end
+
+        // If the pop side wants to read.
+        if (pop) begin
+            // if the sr is not empty.
+            if (rptr != wptr_bs) begin
+                // Incriment rptr.
+                rptr = rptr + 1;
+            end
+        end
+
+        // Present the data stored at rptr to the output of the module.
+        doup <= data[rptr[DL2-1:0]];
+
+        // Set the empty condition.
+        dst_empty <= (rptr == wptr_bs);
+
+        // Set the destination number available value.
+        dst_num_avail <= (rptr[DL2] == wptr_bs[DL2]) ? (wptr_bs[DL2-1:0] - rptr[DL2-1:0]) : (wptr_bs[DL2-1:0] + DEPTH - rptr[DL2-1:0]);
+
+        // Update the graycode value for rptr on the back side.
+        rptr_bs_gray <= rptr ^ (rptr >> 1);
+        // Update the graycode value for wptr on the back side.
+        wptr_bs_gray <= wptr_fs_gray;
+    end
+endmodule
 
 /*          Priority decoder            */
 module priority_decoder #(parameter INPUT_WIDTH = 4, OUTPUT_WIDTH = 2)(

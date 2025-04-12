@@ -2,7 +2,7 @@
 `define INSTRUCTION_QUEUE_INPUT_WIDTH 16
 
 
-`include "structs.sv"
+`include "structs.svh"
 `include "defines.svh"
 `timescale 1ps/1ps
 
@@ -32,7 +32,7 @@ always begin
     #30 mclk =~mclk;    //60
 end
 
-//always @(posedge cclk) $display("clock! %t", $time);
+always @(posedge cclk) $display("clock! %t", $time);
 
 wire noc_bus core_to_mem;
 wire noc_bus mem_to_core;

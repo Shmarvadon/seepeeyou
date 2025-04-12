@@ -1,10 +1,16 @@
 `timescale 1ps/1ps
 
+/*
 
+Matmul app perf before cache:
+    Total run time = 7,036,075 ps
+    Total core cycles = 703,607
+    penalty for GOTO = 2560ps (256 core cycles).
+    penalty for jump = 1200ps (120 core cycles).
+*/
 
 `include "defines.svh"
-//`include "nocstop.sv"
-`include "core_memory_access_controller.sv"
+`include "structs.svh"
 
 
 module soc_tb;

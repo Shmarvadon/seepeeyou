@@ -1,6 +1,6 @@
 // https://verificationacademy.com/forums/t/blocking-or-non-blocking-statement-vs/42389    dave_59
 // Big up dave_59, that man has all the wisdom in the world.
-
+`include "structs.svh"
 
 /*
 

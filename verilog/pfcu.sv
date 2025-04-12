@@ -1,4 +1,4 @@
-`include "structs.sv"
+`include "structs.svh"
 
 module program_flow_control_unit(
     input clk,
@@ -81,7 +81,7 @@ always_comb begin
         // GOT k
         5'b01001:
         begin
-            $display("Executing a PFCU GOT %d instruction", instruction.inst[8+:32]);
+            $display("Executing a PFCU GOT %d instruction at %t", instruction.inst[8+:32], $time);
 
             // Do the work but dont evaluate conditions for progressing to next stage.
             case(mcics) 
@@ -216,10 +216,11 @@ always @(posedge clk) begin
             case (mcics)
             // Beginning.
             0:
-            begin
+            begin                
                 // If the port is open and the NOC replies tx_complete then we can move onto next stage.
                 if (noc_port.to_noc_prt_stat == port_open && noc_port.tx_complete) begin
                     mcics <= mcics + 1;
+
 
                     // This triggers when the matmul program is complete.
                     if (instruction.inst[39:0] == 40'b0000_0000_0000_0000_0001_0000_0001_0011_0100_1110) $stop;
