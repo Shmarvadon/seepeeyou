@@ -1,4 +1,4 @@
-`include "structs.sv"
+`include "structs.svh"
 `include "defines.svh"
 
 module memory_interface(

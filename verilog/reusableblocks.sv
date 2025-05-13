@@ -164,6 +164,15 @@ module fifo_sr #(parameter WIDTH, DEPTH, HEADS, TAILS)(
         // Update the number of entries that are occupied.
         dst_num_avail <= (rptr[$clog2(DEPTH)] == wptr[$clog2(DEPTH)]) ? (wptr[$clog2(DEPTH)-1:0] - rptr[$clog2(DEPTH)-1:0]) : (wptr[$clog2(DEPTH)-1:0] + DEPTH - rptr[$clog2(DEPTH)-1:0]);
     end
+
+    // Async reset.
+    always @(posedge rst, clk) begin
+        wptr = 0;
+        rptr = 0;
+        data = 0;
+        rptr_tmp = 0;
+    end
+
 endmodule
 
 module cdc_fifo_sr #(parameter WIDTH, DEPTH, localparam DL2 = $clog2(DEPTH))(
@@ -271,6 +280,24 @@ module cdc_fifo_sr #(parameter WIDTH, DEPTH, localparam DL2 = $clog2(DEPTH))(
         rptr_bs_gray <= rptr ^ (rptr >> 1);
         // Update the graycode value for wptr on the back side.
         wptr_bs_gray <= wptr_fs_gray;
+    end
+
+    // Async reset.
+    always @(posedge drst, srst, dclk, sclk) begin
+        wptr = 0;
+        rptr = 0;
+
+        wptr_bs = 0;
+        rptr_fs = 0;
+
+        wptr_bs_gray = 0;
+        wptr_fs_gray = 0;
+
+        rptr_bs_gray = 0;
+        rptr_fs_gray = 0;
+
+        data = 0;
+
     end
 endmodule
 
