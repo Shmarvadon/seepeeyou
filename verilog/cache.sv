@@ -446,6 +446,8 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
         // If the read port is enabled.
         if (fs_rdp_en) begin
 
+            $display("Attempting to read a line from cache.");
+
             fs_rdp_done = 0;
             fs_wrp_done = 0;
 
@@ -475,6 +477,11 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
                     // Signal to tag ram to mark the line as invalid next cycle.
                     tr_rdp_set_wr[read_way_sel].valid <= 0;
                     tr_rdp_line_we[read_way_sel] <= 1;
+                end
+                else begin
+                    // Debug printout.
+                    $display("L2 cahche");
+                    $display("Unable to find cache line with tag %h in set %d", fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], fs_rdp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
                 end
 
                 // Signal done.

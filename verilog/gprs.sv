@@ -1,15 +1,15 @@
 
 module general_purpose_registers(
-    input          clk,
-    input          rst,
+    input   logic           clk,
+    input   logic           rst,
     
-    input   [15:0] we,
-    input   [31:0] inp [15:0],
-    output  bit [31:0] oup [15:0]
+    input   logic  [15:0]   we,
+    input   logic  [31:0]   inp [15:0],
+    output  logic [31:0]      oup [15:0]
 );
 
 // The registers.
-bit [31:0] registers [15:0];
+logic [31:0] registers [15:0];
 // Assign them to drive the output.
 assign oup = registers;
 

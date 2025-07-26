@@ -14,12 +14,12 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
     // Request submission.
     input  logic [NUM_PORTS-1:0]         fs_prts_inp_rp,     // Front end ports input request present.
     input  line_acc_req [NUM_PORTS-1:0]  fs_prts_inp_req,    // Front end ports input request.
-    output logic [NUM_PORTS-1:0]         fs_prts_inp_op,     // Front end ports input open.
+    output logic [NUM_PORTS-1:0]         fs_prts_inp_ra,     // Front end ports input open.
 
     // Request reply.
     output logic [NUM_PORTS-1:0]         fs_prts_oup_rp,     // Front end ports output request present.
     output line_acc_req [NUM_PORTS-1:0]  fs_prts_oup_req,    // Front end ports output request.
-    input logic [NUM_PORTS-1:0]          fs_prts_oup_op,     // Front end ports output open.
+    input logic [NUM_PORTS-1:0]          fs_prts_oup_ra,     // Front end ports output open.
 
 
     // Input to stage 1 of mem access controller.
@@ -109,7 +109,7 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
                 $display("Read request retiring. %t", $time);
 
                 // If the front end port & L1 can both accept the retirement.
-                if (fs_prts_oup_op[ifr_oup[rd_rtn_par_ind].prt] && stg_1_wrp_op) begin
+                if (fs_prts_oup_ra[ifr_oup[rd_rtn_par_ind].prt] && stg_1_wrp_op) begin
                     // Signal to the front end that we are sending it a reply.
                     fs_prts_oup_rp[ifr_oup[rd_rtn_par_ind].prt] = 1;
                     // Signal to L1 cache that we are sending it a write.
@@ -153,7 +153,7 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
     bit [$clog2(NUM_PORTS):0] fs_prt_sel;
     always_comb begin
         // Defaults values.
-        fs_prts_inp_op = 0;
+        fs_prts_inp_ra = 0;
         stg_1_rdp_rp = 0;
         ifr_we = 0;
 
@@ -170,7 +170,7 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
             // If stage 1 can accept the request & the ifrs buffer isnt full.
             if (stg_1_rdp_op && !ifr_full) begin
                 // Signal to the fs port that the request is to be accepted.
-                fs_prts_inp_op[fs_prt_sel] = 1;
+                fs_prts_inp_ra[fs_prt_sel] = 1;
 
                 // Create read request to L1 stage.
                 stg_1_rdp_req = fs_prts_inp_req[fs_prt_sel].addr;
@@ -654,8 +654,8 @@ module mem_acc_noc_stage(
 
 
     //          NOC stuff
-    assign tx_dat.hdr.src_addr = noc_port.prt_addr;
-    assign tx_dat.hdr.src_port = noc_port.prt_num;
+    assign tx_dat.hdr.src_addr = prt_addr;
+    assign tx_dat.hdr.src_port = prt_num;
 
     bit snd_r_or_w = 0; // 0 means send read, 1 means send write.
 
@@ -737,6 +737,7 @@ module mem_acc_noc_stage(
         // Default values.
         rx_re = 0;
         rdrply_q_we = 0;
+        rdrply_q_inp = 0;
 
         // If the noc port has an rx for us.
         if (rx_av) begin
@@ -751,7 +752,7 @@ module mem_acc_noc_stage(
                     // Signal to the read reply queue that data is available.
                     rdrply_q_we = 1;
                     // Signal to the noc port that we have read the rx.
-                    noc_port.rx_re = 1;
+                    rx_re = 1;
                 end
             end
         end
@@ -769,12 +770,12 @@ module mem_acc_cont #(parameter NUM_PORTS = 2)(
     // Request submission.
     input  logic [NUM_PORTS-1:0]         fs_prts_inp_rp,    // Front end ports input request present.
     input  line_acc_req [NUM_PORTS-1:0]  fs_prts_inp_req,   // Front end ports input request.
-    output logic [NUM_PORTS-1:0]         fs_prts_inp_op,    // Front end ports input open.
+    output logic [NUM_PORTS-1:0]         fs_prts_inp_ra,    // Front end ports input open.
 
     // Request reply.
     output logic [NUM_PORTS-1:0]         fs_prts_oup_rp,    // Front end ports output request present.
     output line_acc_req [NUM_PORTS-1:0]  fs_prts_oup_req,   // Front end ports output request.
-    input logic [NUM_PORTS-1:0]          fs_prts_oup_op,    // Front end ports output open.
+    input logic [NUM_PORTS-1:0]          fs_prts_oup_ra,    // Front end ports output open.
 
 
     // Interface with NIU.
@@ -804,7 +805,7 @@ module mem_acc_cont #(parameter NUM_PORTS = 2)(
     logic [3]           rd_rpl_a;       // Read reply accepted.
 
     mem_acc_scheduler #(NUM_PORTS) scheduler(clk, rst, 
-    fs_prts_inp_rp, fs_prts_inp_req, fs_prts_inp_op, fs_prts_oup_rp, fs_prts_oup_req, fs_prts_oup_op,
+    fs_prts_inp_rp, fs_prts_inp_req, fs_prts_inp_ra, fs_prts_oup_rp, fs_prts_oup_req, fs_prts_oup_ra,
     stg_1_rdp_rp, stg_1_rdp_req, stg_1_rdp_op, stg_1_wrp_rp, stg_1_wrp_req, stg_1_wrp_op,
     rd_rpl_p, rd_rpl, rd_rpl_a);
 

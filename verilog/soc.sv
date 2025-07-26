@@ -34,8 +34,15 @@ end
 
 always @(posedge cclk) $display("clock! %t", $time);
 
-wire noc_bus core_to_mem;
-wire noc_bus mem_to_core;
+// From core to IMC.
+logic [31:0][7:0] noc_bus_inp_dat;
+logic [5:0]       noc_bus_inp_bp;
+logic             noc_bus_inp_bo;
+// From IMC to core.
+logic [31:0][7:0] noc_bus_oup_dat;
+logic [5:0]       noc_bus_oup_bp;
+logic             noc_bus_oup_bo;
+
 
 // Instantiate a core here in addition to clock generation for fclk, cclk & mclk.
 // Instantiate a memory controller and GPIO block.

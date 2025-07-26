@@ -192,7 +192,7 @@ soc sooc(rst, mem_addr_sel, mem_dat, mem_en, mem_we, mem_re, mclk);
 
 // Handle the memory stuffs.
 assign mem_dat = (mem_re) ? mem_dat_driver : 'hz;
-always @(posedge mclk) begin
+always @(negedge mclk) begin
     // If the memory is enabled.
     if (mem_en) begin
 

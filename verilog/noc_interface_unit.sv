@@ -162,9 +162,12 @@ module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
         tx_buff_push = 0;
         prt_tx_accepted = 0;
 
+        $display("This Ran.");
+
 
         // Check if the entire packet is present in the buffer.
-        if (rx_buff_dst_num_avail >= rx_buff_oup[0] & rx_buff_dst_num_avail != 0) begin
+        if (rx_buff_dst_num_avail >= rx_buff_oup[0] && rx_buff_dst_num_avail != 0) begin
+            $display("Found a packet in rx buffer");
             // Check if the packet is destined for this NIU.
             if (rx_buff_oup[1][7:4] == ADDR) begin
                 // Present the rx to the appropriate port's rx queue.
@@ -211,6 +214,7 @@ module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
         end
         // If there is not a complete packet in the rx buffer.
         else begin
+            $display("Checking for pending TX. %t", $time);
             // Check if any of the tx ports have anything to send.
             for (int i = 0; i < PORTS; i = i + 1) begin
                 // If the tx port queue is not empty & the tx buff can accept the packet it wants to send.
@@ -249,6 +253,9 @@ module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
             rx_dat[i] = prt_rx_oup[i];
             rx_av[i] = !prt_rx_oup_empty[i];
             prt_rx_pop[i] = rx_re[i];
+
+            prt_addr[i] = ADDR;
+            prt_num[i] = i;
         end
     end
 

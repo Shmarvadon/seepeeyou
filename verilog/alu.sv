@@ -6,9 +6,9 @@ module arithmetic_and_logic_unit(
     output bit done,
 
     input [47:0] inst,
-    input bit [31:0] gpr_oup [15:0],
-    output bit [31:0] gpr_inp [15:0],
-    output bit [15:0] gpr_we,
+    input logic [31:0] gpr_oup [15:0],
+    output logic [31:0] gpr_inp [15:0],
+    output logic [15:0] gpr_we,
 
     output bit [7:0] status
 );

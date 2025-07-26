@@ -126,7 +126,7 @@ module fifo_sr #(parameter WIDTH, DEPTH, HEADS, TAILS)(
                 // If the shift register is not full.
                 if (!(wptr[$clog2(DEPTH)-1:0] == rptr[$clog2(DEPTH)-1:0] && wptr[$clog2(DEPTH)] != rptr[$clog2(DEPTH)])) begin
                     // Push the data.
-                    data[wptr[$clog2(DEPTH)-1:0]] <= dinp[i];
+                    data[wptr[$clog2(DEPTH)-1:0]] = dinp[i];
 
                     // Incriment the wptr.
                     wptr = wptr + 1;
@@ -155,10 +155,12 @@ module fifo_sr #(parameter WIDTH, DEPTH, HEADS, TAILS)(
             if (rptr_tmp != wptr) begin
                 // Present the data.
                 doup[i] <= data[rptr_tmp[$clog2(DEPTH)-1:0]];
-
-                // Incriment rptr_tmp.
-                rptr_tmp = rptr_tmp + 1;
             end
+            else begin
+                doup[i] <= 0;
+            end
+            // Incriment rptr_tmp.
+            rptr_tmp = rptr_tmp + 1;
         end
 
         // Update the number of entries that are occupied.
@@ -167,10 +169,12 @@ module fifo_sr #(parameter WIDTH, DEPTH, HEADS, TAILS)(
 
     // Async reset.
     always @(posedge rst, clk) begin
-        wptr = 0;
-        rptr = 0;
-        data = 0;
-        rptr_tmp = 0;
+        if (rst) begin
+            wptr = 0;
+            rptr = 0;
+            data = 0;
+            rptr_tmp = 0;
+        end
     end
 
 endmodule

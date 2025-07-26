@@ -79,7 +79,7 @@ typedef struct packed {
 /*          Instruction stuff           */
 
 typedef struct packed {
-    bit [47:0] inst;
+    bit [47:0] bits;        // Used to be called inst, if errors swap out with bits.
     bit [31:0] addr;
     bit [3:0] len;
 } queued_instruction;

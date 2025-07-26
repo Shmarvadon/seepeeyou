@@ -82,6 +82,20 @@ module instruction_front_end #(parameter IQ_LEN = 8, IDB_LEN = 64)(
         
     end
 
+    // Handle module reset.
+    always @(posedge rst) begin
+        idb_rst <= 1;
+        ibf_rst <= 1;
+        iq_rst <= 1;
+        idbba <= 0;
+    end
+
+    always @(negedge rst) begin
+        idb_rst <= 0;
+        ibf_rst <= 0;
+        iq_rst <= 0;
+    end
+
 endmodule
 
 // Very simple for now, focusing on measuring matmul perf with cache before moving to ucode based decode.
@@ -124,7 +138,7 @@ module instruction_decoder #(parameter IB_INP_LEN = 8)(
             if (ib[0][3] & iba >= 6 & !iqf) begin
                 // Send on over the instruction bytes & signal a pop for next clk from idb.
                 for (int i = 0; i < 6; i = i + 1) begin
-                    decoded_instruction.inst[(i * 8)+:8] = ib[i];
+                    decoded_instruction.bits[(i * 8)+:8] = ib[i];
                     ibp[i] = 1;
                 end
 
@@ -137,7 +151,7 @@ module instruction_decoder #(parameter IB_INP_LEN = 8)(
             end
             else if (!ib[0][3] & iba >= 2 & !iqf) begin
                 // Send over instruction bytes & signal pop for next clk from idb.
-                decoded_instruction.inst = {ib[1], ib[0]};
+                decoded_instruction.bits = {ib[1], ib[0]};
                 ibp[1:0] = 2'b11;
 
                 // Assign address of instruction.
@@ -161,7 +175,7 @@ module instruction_decoder #(parameter IB_INP_LEN = 8)(
                 if (!ib[0][4] & iba >= 6) begin
                      // Send on over the instruction bytes & signal a pop for next clk from idb.
                     for (int i = 0; i < 6; i = i + 1) begin
-                        decoded_instruction.inst[(i * 8)+:8] = ib[i];
+                        decoded_instruction.bits[(i * 8)+:8] = ib[i];
                         ibp[i] = 1;
                     end
 
@@ -177,7 +191,7 @@ module instruction_decoder #(parameter IB_INP_LEN = 8)(
                 if (ib[0][4] & iba >= 3) begin
                     // Send on over the instruction bytes & signal a pop for next clk from idb.
                     for (int i = 0; i < 3; i = i + 1) begin
-                        decoded_instruction.inst[(i * 8)+:8] = ib[i];
+                        decoded_instruction.bits[(i * 8)+:8] = ib[i];
                         ibp[i] = 1;
                     end
 
@@ -191,7 +205,7 @@ module instruction_decoder #(parameter IB_INP_LEN = 8)(
             end
             else if (ib[0][3] & !iqf) begin
                 // Send over instruction bytes & signal pop for next clk from idb.
-                decoded_instruction.inst = {ib[1], ib[0]};
+                decoded_instruction.bits = {ib[1], ib[0]};
                 ibp[1:0] = 2'b11;
 
                 // Assign address of instruction.
@@ -206,13 +220,13 @@ module instruction_decoder #(parameter IB_INP_LEN = 8)(
         // Program flow control instruction
         3'b110:
         begin
-            $display("Decoding Program Flow Control instruction at %h", dbba);
+            $display("Decoding Program Flow Control instruction at %h", idbba);
 
             // If the instruction is an immediate.
             if (ib[0][3] & !iqf & iba >= 5) begin
                 // Send on over the instruction bytes & signal a pop for next clk from idb.
                 for (int i = 0; i < 5; i = i + 1) begin
-                    decoded_instruction.inst[(i * 8)+:8] = ib[i];
+                    decoded_instruction.bits[(i * 8)+:8] = ib[i];
                     ibp[i] = 1;
                 end
 
@@ -225,7 +239,7 @@ module instruction_decoder #(parameter IB_INP_LEN = 8)(
             end
             else if (!ib[0][3] & !iqf & iba >= 1) begin
                 // Send over instruction bytes & signal pop for next clk from idb.
-                decoded_instruction.inst = ib[0];
+                decoded_instruction.bits = ib[0];
                 ibp[0] = 1;
 
                 // Assign address of instruction.
@@ -265,13 +279,13 @@ module instruction_fetch #(parameter IDB_SIZE = 64, IDB_HEAD_COUNT = 16)(
     localparam MRR_LEN = 8;
 
     typedef struct packed {
-        bit [15:0] rmsk;
-        bit [31:0] addr;
+        logic [15:0] rmsk;
+        logic [31:0] addr;
     } ifmrr;    // Instruction fetch memory read request.
 
     typedef struct packed {
-        bit [31:0] addr;
-        bit [127:0] dat;
+        logic [31:0] addr;
+        logic [127:0] dat;
     } mrrr;     // Memory read request reply.
 
     // instruction fetch memory read request queue.
@@ -289,9 +303,12 @@ module instruction_fetch #(parameter IDB_SIZE = 64, IDB_HEAD_COUNT = 16)(
     mrrr                            mrr_inp;
     logic [MRR_LEN-1:0]             mrr_clr_ps;
     mrrr                            mrr_oup [MRR_LEN-1:0];
+    logic [$bits(mrrr)-1:0]         mrr_oup_r [MRR_LEN-1:0];
     logic [MRR_LEN-1:0]             mrr_used_pos;
 
-    sipo_buffer #($bits(mrrr), MRR_LEN) mrr(clk, rst, mrr_we, mrr_inp, mrr_clr_ps, mrr_oup, mrr_used_pos);
+    assign mrr_oup = mrr_oup_r;
+
+    sipo_buffer #($bits(mrrr), MRR_LEN) mrr(clk, rst, mrr_we, mrr_inp, mrr_clr_ps, mrr_oup_r, mrr_used_pos);
 
     // Logic to request more instruction bytes when the idb is not full.
     logic [31:0] current_fetch_addr;
@@ -305,20 +322,30 @@ module instruction_fetch #(parameter IDB_SIZE = 64, IDB_HEAD_COUNT = 16)(
         // Count up the number of bytes being fetched currently.
         // loop over all pop ports from sr.
         for (int i = 0; i < IFQ_LEN; i = i + 1) begin
-            // Loop over all the bytes in rmsk.
-            for (int j = 0; j < 16; j = j + 1) begin
-                if (i < ifq_dst_num_avail & ifq_oup[i].rmsk[j]) current_fetch_addr = current_fetch_addr + 1;
+            // If the entry is in range.
+            if (i < ifq_dst_num_avail) begin
+                // Set current_fetch_addr.
+                current_fetch_addr = ifq_oup[i].addr;
+                // Loop over all the bytes in rmsk.
+                for (int j = 0; j < 16; j = j + 1) begin
+                    if (ifq_oup[i].rmsk[j]) current_fetch_addr = current_fetch_addr + 1;
+                end
+                $display("Current Fetch Address: %d", current_fetch_addr);
             end
-        end
-        current_fetch_addr = current_fetch_addr + idbba + idb_dst_num_avail;
 
-        if (idb_src_num_avail >= 16) begin
+        end
+
+        $display("Current Fetch Addr: %d", current_fetch_addr);
+        current_fetch_addr = current_fetch_addr + idbba + idb_dst_num_avail;
+        $display("Current Fetch Addr: %b", current_fetch_addr[31:4]);
+
+        if (idb_src_num_avail >= 16 & ifq_src_num_avail > 0) begin
             // Setup the ifq input.
             for (int i = 15; i >= 0; i = i - 1) begin
                 if (i >= current_fetch_addr[3:0]) ifq_dinp.rmsk[i] = 1;
                 else ifq_dinp.rmsk[i] = 0;
             end
-            ifq_dinp.addr = {current_fetch_addr[31:4], 0};
+            ifq_dinp.addr = {current_fetch_addr[31:4], 4'b0000}; // For some reason its bugged when 0 instead of 4'b0000...
 
             // Setup tx to the mem subsys.
             mac_prt_tx_req.addr = ifq_dinp.addr;
@@ -366,7 +393,7 @@ module instruction_fetch #(parameter IDB_SIZE = 64, IDB_HEAD_COUNT = 16)(
         // Loop over the replies and check if any of them match the next bytes to shift into the idb.
         for (int i = 0; i < MRR_LEN; i = i + 1) begin
             // If the reply matches the request in the head of the ifq.
-            if (mrr_oup[i].addr == ifq_oup[0].addr) begin
+            if (mrr_oup[i].addr == ifq_oup[0].addr & mrr_used_pos[i]) begin
                 // Loop over the bytes and signal push to idb if needed.
                 for (int j = 0; j < IDB_HEAD_COUNT; j = j + 1) begin
                     if (ifq_oup[0].rmsk[j]) begin

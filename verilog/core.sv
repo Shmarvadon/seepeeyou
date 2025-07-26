@@ -45,7 +45,9 @@ module core(
     network_interface_unit #(NIU_PORTS, 0) niu(
     cclk, fclk, rst, niu_prt_addr, niu_prt_num,
     niu_rx_av, niu_rx_re, niu_rx_dat,
-    niu_tx_av, niu_tx_re, niu_tx_dat
+    niu_tx_av, niu_tx_re, niu_tx_dat,
+    noc_bus_inp_dat, noc_bus_inp_bp, noc_bus_inp_bo,
+    noc_bus_oup_dat, noc_bus_oup_bp, noc_bus_oup_bo
     );
 
 
@@ -67,49 +69,105 @@ module core(
     niu_tx_av[0], niu_tx_re[0], niu_tx_dat[0]
     );
 
-    /*          Instruction fetch, decode & queue logic         */
-    bit [31:0] pc;
-    queued_instruction curr_inst;
-    bit inst_pres;
-    bit rq_nxt_inst;
-    bit inst_unt_rst;
-    bit mdfy_pc;
-    instruction_decoder #(`INSTRUCTION_QUEUE_LENGTH, `INSTRUCTION_QUEUE_INPUT_WIDTH) inst_fetch(cclk, inst_unt_rst, pc, mdfy_pc, curr_inst, inst_pres, rq_nxt_inst, noc_ports[0]);
+
+    /*          Instruction front end           */
+    logic [31:0]            ife_pc_inp;
+    logic                   ife_jmp;
+    queued_instruction      ife_iq_oup;
+    logic                   ife_iq_ip;
+    logic                   ife_iq_pop;
+    logic                   ife_rst;
+
+    instruction_front_end #(8, 64) ife(cclk, ife_rst, 
+    ife_pc_inp, ife_jmp, ife_iq_oup, ife_iq_ip, ife_iq_pop,
+    mac_prt_inp_rp[0], mac_prt_inp_req[0], mac_prt_inp_op[0],
+    mac_prt_oup_rp[0], mac_prt_oup_req[0], mac_prt_oup_op[0]);
+
 
     /*          General Purpose Registers           */
-    bit [15:0] gpr_we;
-    bit [31:0] gpr_inp [15:0];
-    bit [31:0] gpr_oup [15:0];
-    bit gpr_rst;
+    logic [15:0] gpr_we;
+    logic [31:0] gpr_inp [15:0];
+    logic [31:0] gpr_oup [15:0];
+    logic gpr_rst;
     general_purpose_registers gprs(cclk, gpr_rst, gpr_we, gpr_inp, gpr_oup);
 
     /*          ALU stuff           */
     bit alu_rst;
-    bit alu_done;
+    bit alu_dn;
     bit [7:0] alu_status;
     bit alu_en;
-    bit [31:0] alu_gpr_oup [15:0];
-    bit [31:0] alu_gpr_inp [15:0];
-    bit [15:0] alu_gpr_we;
-    arithmetic_and_logic_unit alu(cclk, alu_rst, alu_en, alu_done, curr_inst.inst, alu_gpr_oup, alu_gpr_inp, alu_gpr_we, alu_status);
+    logic [31:0] alu_gpr_oup [15:0];
+    logic [31:0] alu_gpr_inp [15:0];
+    logic [15:0] alu_gpr_we;
+    arithmetic_and_logic_unit alu(cclk, alu_rst, alu_en, alu_dn, ife_iq_oup.bits, alu_gpr_oup, alu_gpr_inp, alu_gpr_we, alu_status);
 
 
     /*          PFCU stuff          */
     bit pfcu_rst;
-    bit pfcu_done;
+    bit pfcu_dn;
     bit pfcu_en;
-    program_flow_control_unit pfcu(cclk, pfcu_rst, pfcu_en, pfcu_done, curr_inst, alu_status, mdfy_pc, pc, shp_we, shp_inp, shp_oup, noc_ports[1]);
-
-    /*          M&IO stuff          */
-    bit mio_rst;
-    bit mio_done;
-    bit mio_en;
-    bit [31:0] mio_gpr_oup [15:0];
-    bit [31:0] mio_gpr_inp [15:0];
-    bit [15:0] mio_gpr_we;
-    memory_and_io_unit miou(cclk, mio_rst, mio_en, mio_done, curr_inst, mio_gpr_oup, mio_gpr_inp, mio_gpr_we, noc_ports[2]);
+    program_flow_control pfcu(cclk, pfcu_rst, pfcu_en, pfcu_dn, ife_iq_oup, alu_status, ife_jmp, ife_pc_inp, shp_we, shp_inp, shp_oup, 
+    mac_prt_inp_rp[1], mac_prt_inp_req[1], mac_prt_inp_op[1],
+    mac_prt_oup_rp[1], mac_prt_oup_req[1], mac_prt_oup_op[1]);
 
 
+    /*          LSU stuff           */
+    bit lsu_rst;
+    bit lsu_dn;
+    bit lsu_en;
+    logic [31:0] lsu_gpr_oup [15:0];
+    logic [31:0] lsu_gpr_inp [15:0];
+    logic [15:0] lsu_gpr_we;
+
+    load_store_unit lsu(clk, lsu_rst, lsu_en, lsu_dn, ife_iq_oup, lsu_gpr_oup, lsu_gpr_inp, lsu_gpr_we,
+    mac_prt_inp_rp[2], mac_prt_inp_req[2], mac_prt_inp_op[2],
+    mac_prt_oup_rp[2], mac_prt_oup_req[2], mac_prt_oup_op[2]);
+
+
+    // Handle enabling the blocks depending on core state / instr.
+    always_comb begin
+        // Default values.
+        ife_iq_pop = 0;
+        gpr_we = 0;
+        alu_en = 0;
+        pfcu_en = 0;
+        lsu_en = 0;
+
+        // If the instruction queue is not empty.
+        if (ife_iq_ip) begin
+            case(ife_iq_oup.bits[2:0])
+            // ALU
+            3'b100:
+            begin
+                ife_iq_pop <= alu_dn;
+                alu_en <= 1;
+                gpr_inp <= alu_gpr_inp;
+                alu_gpr_oup <= gpr_oup;
+                gpr_we <= alu_gpr_we;
+            end
+
+            // PFCU
+            3'b110:
+            begin
+                ife_iq_pop <= pfcu_dn;
+                pfcu_en <= 1;
+            end
+
+            // LSU
+            3'b010:
+            begin
+                ife_iq_pop <= lsu_dn;
+                lsu_en <= 1;
+
+                gpr_inp <= lsu_gpr_inp;
+                lsu_gpr_oup <= gpr_oup;
+                gpr_we <= lsu_gpr_we;
+            end
+            endcase
+        end
+    end
+
+    /*
     always_comb begin
         // default values.
         rq_nxt_inst <= 1;
@@ -147,6 +205,7 @@ module core(
         end
         else mio_en <= 0;
     end
+    */
 
 
 
@@ -154,19 +213,19 @@ module core(
     // Handle propogating reset to each IP.
     always @(posedge rst) begin
         // Send reset to each IP block.
-        inst_unt_rst <= 1;
+        ife_rst <= 1;
         gpr_rst <= 1;
         alu_rst <= 1;
         pfcu_rst <= 1;
-        mio_rst <= 1;
+        lsu_rst <= 1;
     end
     always @(negedge rst) begin
         // Pull reset low for each IP block.
-        inst_unt_rst <= 0;
+        ife_rst <= 0;
         gpr_rst <= 0;
         alu_rst <= 0;
         pfcu_rst <= 0;
-        mio_rst <= 0;
+        lsu_rst <= 0;
     end
 
     // Hande reset of the core.
