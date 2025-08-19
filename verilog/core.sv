@@ -52,7 +52,7 @@ module core(
 
 
     /*          Memory Access Controller            */
-    localparam MAC_PORTS = 2;
+    localparam MAC_PORTS = 3;
     logic [MAC_PORTS-1:0]           mac_prt_inp_rp;
     line_acc_req [MAC_PORTS-1:0]    mac_prt_inp_req;
     logic [MAC_PORTS-1:0]           mac_prt_inp_op;
@@ -119,7 +119,7 @@ module core(
     logic [31:0] lsu_gpr_inp [15:0];
     logic [15:0] lsu_gpr_we;
 
-    load_store_unit lsu(clk, lsu_rst, lsu_en, lsu_dn, ife_iq_oup, lsu_gpr_oup, lsu_gpr_inp, lsu_gpr_we,
+    load_store_unit lsu(cclk, lsu_rst, lsu_en, lsu_dn, ife_iq_oup, lsu_gpr_oup, lsu_gpr_inp, lsu_gpr_we,
     mac_prt_inp_rp[2], mac_prt_inp_req[2], mac_prt_inp_op[2],
     mac_prt_oup_rp[2], mac_prt_oup_req[2], mac_prt_oup_op[2]);
 
@@ -139,73 +139,104 @@ module core(
             // ALU
             3'b100:
             begin
-                ife_iq_pop <= alu_dn;
-                alu_en <= 1;
-                gpr_inp <= alu_gpr_inp;
-                alu_gpr_oup <= gpr_oup;
-                gpr_we <= alu_gpr_we;
+                ife_iq_pop = alu_dn;
+                alu_en = 1;
+                gpr_inp = alu_gpr_inp;
+                alu_gpr_oup = gpr_oup;
+                gpr_we = alu_gpr_we;
             end
 
             // PFCU
             3'b110:
             begin
-                ife_iq_pop <= pfcu_dn;
-                pfcu_en <= 1;
+                ife_iq_pop = pfcu_dn;
+                if (!pfcu_dn) pfcu_en = 1;  // Need this to stop PFCU double submitting line write requests.
             end
 
             // LSU
             3'b010:
             begin
-                ife_iq_pop <= lsu_dn;
-                lsu_en <= 1;
+                ife_iq_pop = lsu_dn;
 
-                gpr_inp <= lsu_gpr_inp;
-                lsu_gpr_oup <= gpr_oup;
-                gpr_we <= lsu_gpr_we;
+                if (!lsu_dn) lsu_en = 1;
+
+                gpr_inp = lsu_gpr_inp;
+                lsu_gpr_oup = gpr_oup;
+                gpr_we = lsu_gpr_we;
             end
             endcase
         end
     end
 
-    /*
-    always_comb begin
+
+    // Calculate some metrics for jump and GOTO cost.
+    real avg_jmp_cost = 0;
+    real avg_goto_cost = 0;
+
+    longint num_jmps = 0;
+    longint num_gots = 0;
+
+    longint start;
+    longint finish; 
+    int time_taken;
+    bit op_type;
+    bit jmp_in_prog;
+    always @(posedge pfcu_en) begin
         // default values.
-        rq_nxt_inst <= 1;
-        gpr_we <= 0;
+        jmp_in_prog <= 0;
 
-        // Check which IP needs to run.
-
-        // ALU.
-        if (curr_inst.inst[2:0] == 3'b100) begin
-            rq_nxt_inst <= alu_done;
-            alu_en <= 1;
-
-            gpr_inp <= alu_gpr_inp;
-            alu_gpr_oup <= gpr_oup;
-            gpr_we <= alu_gpr_we;
+        // If the operation is a GOTO / RET
+        if (ife_iq_oup.bits[6]) begin
+            // set op type to GOTO / RET (0) and set start time and set jmp in prog to 1.
+            op_type = 0;
+            start = $time;
+            jmp_in_prog <= 1;
         end
-        else alu_en <= 0;
-
-        // PFCU
-        if (curr_inst.inst[2:0] == 3'b110) begin
-            rq_nxt_inst <= pfcu_done;
-            pfcu_en <= 1;
-
+        // If the operation is a JMP / JIZ
+        if (!ife_iq_oup.bits[6]) begin
+            // set op type to JMP / JIZ (1) and set start time and set jmp in prog to 1.
+            op_type = 1;
+            start = $time;
+            jmp_in_prog <= 1;
         end
-        else pfcu_en <= 0;
-
-        // MIOU
-        if (curr_inst.inst[2:0] == 3'b010)begin
-            rq_nxt_inst <= mio_done;
-            mio_en <= 1;
-
-            gpr_inp <= mio_gpr_inp;
-            mio_gpr_oup <= gpr_oup;
-            gpr_we <= mio_gpr_we;
-        end
-        else mio_en <= 0;
     end
-    */
+
+    always @(posedge ife_iq_ip) begin
+        // If a jump is to be measured.
+        if (jmp_in_prog) begin
+            // Record finish time & calc time taken.
+            finish = $time;
+            time_taken = finish - start;
+
+            // if op is JMP / JIZ.
+            if (op_type) begin
+                if (num_jmps != 0) begin
+                    avg_jmp_cost = avg_jmp_cost + time_taken;
+                    avg_jmp_cost = avg_jmp_cost / 2;
+                end
+                else begin
+                    avg_jmp_cost = avg_jmp_cost + time_taken;
+                end
+
+                num_jmps = num_jmps + 1;
+            end
+            // if op is GOTO / RET.
+            if (!op_type) begin
+                if (num_gots != 0) begin
+                    avg_goto_cost = avg_goto_cost + time_taken;
+                    avg_goto_cost = avg_goto_cost / 2;
+                end
+                else begin
+                    avg_goto_cost = avg_goto_cost + time_taken;
+                end
+
+                num_gots = num_gots + 1;
+            end
+
+        jmp_in_prog <= 0;
+        end
+    end
+
 
 
 

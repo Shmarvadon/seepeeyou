@@ -3,10 +3,18 @@
 /*
 
 Matmul app perf before cache:
+    1ps/1ps
     Total run time = 7,036,075 ps
     Total core cycles = 703,607
     penalty for GOTO = 2560ps (256 core cycles).
     penalty for jump = 1200ps (120 core cycles).
+
+Matmul app perf after cache:
+    1ps/1ps
+    Total run time = 516,525 ps
+    Total core cycles = 51,652
+    Penalty for GOTO = 101.167ps (10 core cycles).
+    penalty for jump = 62.5049ps (6 core cycles).
 */
 
 `include "defines.svh"
@@ -117,7 +125,7 @@ initial begin
     // Incriment i then check if i == 8.
     memory[168:163]       = 48'b0000_0000_0000_0000_0000_0000_0000_0001_0000_0110_1000_1100;           // ADD 1,   R6
     memory[174:169]       = 48'b0000_0000_0000_0000_0000_0000_0000_1000_0000_0110_1001_1100;           // CMP 8,   R6
-    memory[179:175]       = 40'b0000_0000_0000_0000_0000_0000_0000_0000_1000_1110;                     // JIZ (Jumps to infinite loop at 185 if i == 8).
+    memory[179:175]       = 40'b0000_0000_0000_0000_0000_0000_1011_1001_1000_1110;                     // JIZ (Jumps to infinite loop at 185 if i == 8).
     memory[184:180]       = 40'b0000_0000_0000_0000_0000_0000_0010_1110_0000_1110;                     // JMP 46
 
     // Infinite loop.

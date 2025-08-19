@@ -3,6 +3,7 @@
 
 // Each cache is 2 port: 1 read, 1 write.
 // Each cache has a seperate read & write queue.
+`define CMAC_DEBUG_LOG
 
 // Memory access controller scheduler stage.
 module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
@@ -47,7 +48,7 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
     // Buffer to hold the in flight requests.
     logic                           ifr_we;                 // In flight requests buffer write enable.
     line_acc_req                    ifr_inp;                // In flight requests buffer input.
-    line_acc_req                    ifr_oup [IFRS_LEN-1:0]; // In flight requests buffer output.
+    line_acc_req [IFRS_LEN-1:0]     ifr_oup ;               // In flight requests buffer output.
     logic [IFRS_LEN-1:0]            ifr_clrp;               // In flight requests buffer clear positions.
     logic [IFRS_LEN-1:0]            ifr_up;                 // In flight requests buffer used positions.
     logic                           ifr_full;               // In flight requests buffer full.
@@ -64,7 +65,7 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
         stg_1_wrp_rp = 0;
         rd_rpl_a = 0;
         ifr_clrp = 0;
-        //fs_prts_oup_req = 0;
+        fs_prts_oup_req = 0;
 
         // Check if there is a read returning. If so then handle the retirement of the request.
         if (rd_rpl_p != 0) begin
@@ -104,14 +105,15 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
 
                 // Drive the front end port.
                 fs_prts_oup_req[ifr_oup[rd_rtn_par_ind].prt] = ifr_oup[rd_rtn_par_ind];
-                fs_prts_oup_req[ifr_oup[rd_rtn_par_ind].prt].dat = stg_1_wrp_req.dat;
+                fs_prts_oup_req[ifr_oup[rd_rtn_par_ind].prt].dat = rd_rpl[rd_rtn_sel].dat;
+                fs_prts_oup_rp[ifr_oup[rd_rtn_par_ind].prt] = 1;
 
+`ifdef CMAC_DEBUG_LOG
                 $display("Read request retiring. %t", $time);
+`endif
 
                 // If the front end port & L1 can both accept the retirement.
                 if (fs_prts_oup_ra[ifr_oup[rd_rtn_par_ind].prt] && stg_1_wrp_op) begin
-                    // Signal to the front end that we are sending it a reply.
-                    fs_prts_oup_rp[ifr_oup[rd_rtn_par_ind].prt] = 1;
                     // Signal to L1 cache that we are sending it a write.
                     stg_1_wrp_rp = 1;
 
@@ -121,7 +123,9 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
                     // Signal to the in flight requests buffer that we want to erase the entry.
                     ifr_clrp[rd_rtn_par_ind] = 1;
 
+`ifdef CMAC_DEBUG_LOG
                     $display("Read request is retiring successfully. %t", $time);
+`endif
                 end
             end
             // If the request is not a read type (its a write).
@@ -129,7 +133,9 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
                 // signal to L1 cache that we want to submit a write operation.
                 stg_1_wrp_rp = 1;
 
+`ifdef CMAC_DEBUG_LOG
                 $display("A write request is attempting to retire, %t", $time);
+`endif
 
                 // If the L1 stage can accept the write request.
                 if (stg_1_wrp_op) begin
@@ -139,7 +145,9 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
                     // Signal to clear the entry from the in flight requests buffer.
                     ifr_clrp[rd_rtn_par_ind] = 1;
 
+`ifdef CMAC_DEBUG_LOG
                     $display("A write request is retired, %t", $time);
+`endif
                 end
             end
 
@@ -151,11 +159,13 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
 
     // Comb block for handling dispatching of requests.
     bit [$clog2(NUM_PORTS):0] fs_prt_sel;
+    logic req_conflict;
     always_comb begin
         // Defaults values.
         fs_prts_inp_ra = 0;
         stg_1_rdp_rp = 0;
         ifr_we = 0;
+        req_conflict = 0;
 
         // Check if the in flights buffer is full or not.
         ifr_full = &ifr_up; // Should be a logical and of the entire packed array which would give 1 if all 1s or 0 otherwise.
@@ -166,9 +176,16 @@ module mem_acc_scheduler #(parameter NUM_PORTS = 2) (
             // Select a port that wants to submit.
             for (integer i = 0; i < NUM_PORTS; i = i + 1) begin if (fs_prts_inp_rp[i]) fs_prt_sel = i; end  // Forgot the [i] for fs_prts_inp_rp and it caused me HOURS of problems :(
 
+            // Check its not conflicting with an inflight request.
+            for (int i = 0; i < IFRS_LEN; i = i + 1) begin
+                if (ifr_oup[i].addr == fs_prts_inp_req[fs_prt_sel].addr & ifr_up[i]) begin req_conflict = 1; $display("Found a conflict in cmac, %t", $time); end
+            end
 
             // If stage 1 can accept the request & the ifrs buffer isnt full.
-            if (stg_1_rdp_op && !ifr_full) begin
+            if (stg_1_rdp_op && !ifr_full & !req_conflict) begin
+
+                $display("This should not run if there is a req conflict, %t", $time);
+
                 // Signal to the fs port that the request is to be accepted.
                 fs_prts_inp_ra[fs_prt_sel] = 1;
 
@@ -640,7 +657,7 @@ module mem_acc_noc_stage(
     // Read reply queue.
     line_read_reply                 rdrply_q_ar;    // Read reply queue active request.
     line_read_reply                 rdrply_q_inp;   // Read reply queue input.
-    logic [$clog2(RD_RP_Q_LEN):0]  rdrply_q_len;   // Read reply queue length.
+    logic [$clog2(RD_RP_Q_LEN):0]   rdrply_q_len;   // Read reply queue length.
     logic                           rdrply_q_we;    // Read reply queue write enable.
     logic                           rdrply_q_se;    // Read reply queue shift enable.
     fifo_queue #($bits(line_read_reply), RD_RP_Q_LEN) rdrp_q(clk, rst, rdrply_q_inp, rdrply_q_ar, rdrply_q_len, rdrply_q_we, rdrply_q_se);
@@ -680,7 +697,7 @@ module mem_acc_noc_stage(
             // Present the request to the noc port.
             tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
             tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
-            tx_dat.hdr.len = $bits(tx_dat.hdr) + $bits(mem_wr);
+            tx_dat.hdr.len = ($bits(tx_dat.hdr) + $bits(mem_wr)) / 8;
             mem_wr.addr = wrrq_q_ar.addr;
             mem_wr.dat = wrrq_q_ar.dat;
             mem_wr.pt = memory_write_request;
@@ -700,10 +717,13 @@ module mem_acc_noc_stage(
             // Present the request to the noc port.
             tx_dat.hdr.dst_addr = `MEMORY_INTERFACE_NOC_ADDR;
             tx_dat.hdr.dst_port = `MEMORY_INTERFACE_NOC_PORT;
-            tx_dat.hdr.len = $bits(tx_dat.hdr) + $bits(mem_rr);
+            tx_dat.hdr.len = ($bits(noc_packet_header) + $bits(mem_rd_rq)) / 8;
             mem_rr.addr = rdrq_q_ar;
             mem_rr.pt = memory_read_request;
 
+`ifdef CMAC_DEBUG_LOG
+            $display("Size of read req is %d, %d", $bits(tx_dat.hdr), $bits(mem_rr));
+`endif
             // Signal that the request is present if one actually is.
             if (rdrq_q_len != 0) begin
                 tx_av = 1;

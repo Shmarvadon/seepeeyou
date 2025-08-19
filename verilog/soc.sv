@@ -48,11 +48,11 @@ logic             noc_bus_oup_bo;
 // Instantiate a memory controller and GPIO block.
 
 // Instantiate a basic memory controller.
-memory_interface mem_int(rst, fclk, mclk, mem_addr_sel, mem_dat, mem_en, mem_we, mem_re, core_to_mem, mem_to_core);
+memory_interface mem_int(rst, fclk, mclk, noc_bus_inp_dat, noc_bus_inp_bp, noc_bus_inp_bo, noc_bus_oup_dat, noc_bus_oup_bp, noc_bus_oup_bo, mem_en, mem_we, mem_re, mem_addr_sel, mem_dat);
 
 
 // Instantiate a core.
-core core_one(cclk, fclk, rst, mem_to_core, core_to_mem);
+core core_one(cclk, fclk, rst, noc_bus_oup_dat, noc_bus_oup_bp, noc_bus_oup_bo, noc_bus_inp_dat, noc_bus_inp_bp, noc_bus_inp_bo);
 
 
 endmodule

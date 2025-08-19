@@ -1,4 +1,5 @@
 
+// hobbled together temporary ALU for testing purposes.
 module arithmetic_and_logic_unit(
     input clk,
     input rst,
@@ -22,68 +23,139 @@ alu_status_register stat_reg(clk, rst, stat_we, stat_inp, status);
 bit [31:0] op_a;
 bit [31:0] op_b;
 bit [31:0] result;
+bit [3:0]  res_dst;
 bit rwe;
 
+
+// Handle executing ALU instructions.
+always_comb begin
+    // Defaults.
+    gpr_we = 0;
+    stat_we = 0;
+    done = 0;
+
+    // If ALU is enabled.
+    if (en) begin
+
+        $display("Executing ALU instruction %h at %t", inst, $time);
+        
+        //          ***Select Operands***
+        case (inst[3:0])
+        
+        // Not immediate.
+        4'b0100:
+        begin
+            op_a = gpr_oup[inst[11:8]];
+            op_b = gpr_oup[inst[15:12]];
+            res_dst = inst[15:12];
+        end
+
+        //  Has an immediate.
+        4'b1100:
+        begin
+            op_a = inst[47:16];
+            op_b = gpr_oup[inst[11:8]];
+            res_dst = inst[11:8];
+        end
+        endcase
+
+        //          ***Process Instructions***
+        case(inst[7:4])
+            // Simple ones.
+            4'b1000: begin result = op_a + op_b;       rwe = 1; end // ADD
+            4'b0010: begin result = op_b - op_a;       rwe = 1; end // SUB
+            4'b1100: begin result = op_a & op_b;       rwe = 1; end // AND
+            4'b0010: begin result = op_a | op_b;       rwe = 1; end // IOR
+            4'b1010: begin result = op_a ^ op_b;       rwe = 1; end // XOR
+            4'b0110: begin result = ~op_a;             rwe = 1; end // NOT
+            4'b1110: begin result = op_a * op_b;       rwe = 1; end // MUL
+            4'b0001: begin result = op_a;              rwe = 1; end // MOV            THIS CAUSED ME 3 DAYS OF LOST PROGRESS THINKING MY HANDWRITTEN MACHINE CODE WAS WRONG.
+            4'b1001: begin result = op_b - op_a;       rwe = 0; end // CMP
+            4'b0101: begin result = {op_a[30:0], 0};   rwe = 1; end // RLS
+            4'b1101: begin result = {0, op_a[30:0]};   rwe = 1; end // RRS
+            default: rwe = 0;
+        endcase
+        
+        // if result write enable.
+        if (rwe) begin gpr_inp[res_dst] = result; gpr_we[res_dst] = 1; end
+
+        //          ***Update ALU Flags***
+
+        // If result is equal to 0.
+        if (result == 0) begin stat_we[0] = 1; stat_inp[0] = 1; end
+        else             begin stat_we[0] = 1; stat_inp[0] = 0; end
+
+
+        // signal done.
+        done = 1;
+
+    end
+end
+
+/*
 // Select operands.
 integer i;
 always_comb begin
+    // defaults.
+    op_a = 0;
+    op_b = 0;
+    result = 0;
+    stat_we = 0;
+    stat_inp = 0;
+    gpr_we = 0;
+
     // If enabled.
     if (en) begin
+
+        //          ***Select operands***            
 
         // Debug print out.
         if (inst[2:0] == 3'b100) $display("ALU active, inst 3:0 = %b", inst[3:0]);
 
         case (inst[3:0]) 
-        
-        // Case of no immediate.
-        4'b0100:
-        begin
-            op_a <= gpr_oup[inst[11:8]];
-            op_b <= gpr_oup[inst[15:12]];
-            gpr_inp[inst[15:12]] <= result;
+            
+            // Case of no immediate.
+            4'b0100:
+            begin
+                op_a = gpr_oup[inst[11:8]];
+                op_b = gpr_oup[inst[15:12]];
+                gpr_inp[inst[15:12]] <= result;
 
-            // If the instruction wants to write back the result.
-            if (rwe) begin
-                // Signal to GPRs to write the result.
-                for (i = 0; i < 16; i = i + 1) begin
-                    if (i == inst[15:12]) gpr_we[i] <= 1;
-                    else gpr_we[i] <= 0;
+                // If the instruction wants to write back the result.
+                if (rwe) begin
+                    // Signal to GPRs to write the result.
+                    for (i = 0; i < 16; i = i + 1) begin
+                        if (i == inst[15:12]) gpr_we[i] = 1;
+                        else gpr_we[i] = 0;
+                    end
                 end
+                // If the instruction doesnt want to write any data.
+                else gpr_we <= 0;
             end
-            // If the instruction doesnt want to write any data.
-            else gpr_we <= 0;
-        end
 
-        // Case of an immediate being present.
-        4'b1100:
-        begin
-            op_a <= inst[47:16];
-            op_b <= gpr_oup[inst[11:8]];
-            gpr_inp[inst[11:8]] <= result;
+            // Case of an immediate being present.
+            4'b1100:
+            begin
+                op_a = inst[47:16];
+                op_b = gpr_oup[inst[11:8]];
+                gpr_inp[inst[11:8]] <= result;
 
-            // If the instruction wants to write back the result.
-            if (rwe) begin
-                // Signal to GPRs to write the result.
-                for (i = 0; i < 16; i = i + 1) begin
-                    if (i == inst[11:8]) gpr_we[i] <= 1;
-                    else gpr_we[i] <= 0;
+                // If the instruction wants to write back the result.
+                if (rwe) begin
+                    // Signal to GPRs to write the result.
+                    for (i = 0; i < 16; i = i + 1) begin
+                        if (i == inst[11:8]) gpr_we[i] = 1;
+                        else gpr_we[i] = 0;
+                    end
                 end
+                // If the instruction doesnt want to write any data.
+                else gpr_we = 0;
             end
-            // If the instruction doesnt want to write any data.
-            else gpr_we <= 0;
-        end
         
         endcase
-    end
-    else begin
-        gpr_we <= 0;
-    end
-end
+        
+        //          ***process instructions***          
 
-// Process instructions.
-always_comb begin
-    // If enabled.
-    if (en) begin
         // If an ALU instruction is presented.
         if (inst[2:0] == 3'b100) begin
 
@@ -92,67 +164,57 @@ always_comb begin
             // Do what the instruction says to do.
             case(inst[7:4])
                 // Simple ones.
-                4'b1000: begin result <= op_a + op_b;       rwe <= 1; end // ADD
-                4'b0010: begin result <= op_b - op_a;       rwe <= 1; end // SUB
-                4'b1100: begin result <= op_a & op_b;       rwe <= 1; end // AND
-                4'b0010: begin result <= op_a | op_b;       rwe <= 1; end // IOR
-                4'b1010: begin result <= op_a ^ op_b;       rwe <= 1; end // XOR
-                4'b0110: begin result <= ~op_a;             rwe <= 1; end // NOT
-                4'b1110: begin result <= op_a * op_b;       rwe <= 1; end // MUL
-                4'b0001: begin result <= op_a;              rwe <= 1; end // MOV            THIS CAUSED ME 3 DAYS OF LOST PROGRESS THINKING MY HANDWRITTEN MACHINE CODE WAS WRONG.
-                4'b1001: begin result <= op_b - op_a;       rwe <= 0; end // CMP
-                4'b0101: begin result <= {op_a[30:0], 0};   rwe <= 1; end // RLS
-                4'b1101: begin result <= {0, op_a[30:0]};   rwe <= 1; end // RRS
-                default: rwe <= 0;
+                4'b1000: begin result = op_a + op_b;       rwe <= 1; end // ADD
+                4'b0010: begin result = op_b - op_a;       rwe <= 1; end // SUB
+                4'b1100: begin result = op_a & op_b;       rwe <= 1; end // AND
+                4'b0010: begin result = op_a | op_b;       rwe <= 1; end // IOR
+                4'b1010: begin result = op_a ^ op_b;       rwe <= 1; end // XOR
+                4'b0110: begin result = ~op_a;             rwe <= 1; end // NOT
+                4'b1110: begin result = op_a * op_b;       rwe <= 1; end // MUL
+                4'b0001: begin result = op_a;              rwe <= 1; end // MOV            THIS CAUSED ME 3 DAYS OF LOST PROGRESS THINKING MY HANDWRITTEN MACHINE CODE WAS WRONG.
+                4'b1001: begin result = op_b - op_a;       rwe <= 0; end // CMP
+                4'b0101: begin result = {op_a[30:0], 0};   rwe <= 1; end // RLS
+                4'b1101: begin result = {0, op_a[30:0]};   rwe <= 1; end // RRS
+                default: rwe = 0;
             endcase
 
             // Signal that we are done.
-            done <= 1;
+            done = 1;
         end
         // If an ALU instruction is not presented.
         else begin 
-            rwe <= 0;
-            done <= 0;
+            rwe = 0;
+            done = 0;
         end
-    end
-    else begin
-        rwe <= 0;
-        done <= 0;
-    end
-end
 
-// Update ALU status flags.
-always_comb begin
-    // If enabled.
-    if (en) begin
+        //          ***Update ALU status flags***           
+
         // If an ALU instruction is in flight.
         if (inst[2:0] == 3'b100) begin
 
             // If result of operation is 0.
             if (result == 0) begin
                 // Signal write for zero status bit.
-                stat_we[0] <= 1;
+                stat_we[0] = 1;
 
                 // Write a 1 to indicate the result is a 0.
-                stat_inp[0] <= 1;
+                stat_inp[0] = 1;
             end
             else begin
                 // Signal write for zero status bit.
-                stat_we[0] <= 1;
-                stat_inp[0] <= 0;
+                stat_we[0] = 1;
+                stat_inp[0] = 0;
             end
         end
-        // If an ALU instruction is not in fliht.
+        // If an ALU instruction is not in flight.
         else begin
-            stat_we <= 0;
-            stat_inp <= 0;
+            stat_we = 0;
+            stat_inp = 0;
         end
-    end
-    else begin
-        stat_we <= 0;
-        stat_inp <= 0;
+
     end
 end
+*/
 endmodule
 
 

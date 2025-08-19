@@ -1,5 +1,7 @@
 `include "structs.svh"
 
+`define NIU_DEBUG_LOG
+
 module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
     input ipclk,    // IP block clock.
     input fclk,     // Bus clock.
@@ -136,7 +138,7 @@ module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
     logic [PORTS-1:0]                                   prt_tx_push;
     logic [PORTS-1:0][$clog2(IP_INTF_BUFFER_LEN):0]     prt_tx_inp_num_avail;
     logic [PORTS-1:0]                                   prt_tx_inp_full;
-
+                                                        // **DEBUG** the output here is correct from tx_oup
     logic [PORTS-1:0][287:0]                            prt_tx_oup;
     logic [PORTS-1:0]                                   prt_tx_pop;
     logic [PORTS-1:0][$clog2(IP_INTF_BUFFER_LEN):0]     prt_tx_oup_num_avail;
@@ -161,29 +163,36 @@ module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
         rx_buff_pop = 0;
         tx_buff_push = 0;
         prt_tx_accepted = 0;
-
+        tx_buff_inp = 0;
+        prt_rx_inp = 0;
+`ifdef NIU_DEBUG_LOG
         $display("This Ran.");
-
+`endif
 
         // Check if the entire packet is present in the buffer.
         if (rx_buff_dst_num_avail >= rx_buff_oup[0] && rx_buff_dst_num_avail != 0) begin
+`ifdef NIU_DEBUG_LOG
             $display("Found a packet in rx buffer");
+`endif
             // Check if the packet is destined for this NIU.
             if (rx_buff_oup[1][7:4] == ADDR) begin
                 // Present the rx to the appropriate port's rx queue.
                 // Done as a for loop for readability.
                 for (int i = 0; i < PORTS; i = i + 1) begin
                     if (rx_buff_oup[1][3:0] == i) begin
-                        // Signal to the rx queue the number of bytes to accept.
-                        prt_rx_push[i] = 1;
+                        // If the prt_rx_buff isnt full.
+                        if (!prt_rx_inp_full) begin
+                            // Signal to the rx queue the number of bytes to accept.
+                            prt_rx_push[i] = 1;
 
-                        // Present paket data & signal pops to rx buff.
-                        for (int j = 0; j < 35; j = j + 1) begin
-                            if (j < rx_buff_oup[0]) begin 
-                                // Present the data to prt rx queue.
-                                prt_rx_inp[i][j+:8] = rx_buff_oup[j];
-                                // Signal to rx buffer to pop this byte.
-                                rx_buff_pop[j] = 1;
+                            // Present paket data & signal pops to rx buff.
+                            for (int j = 0; j < 35; j = j + 1) begin
+                                if (j < rx_buff_oup[0]) begin 
+                                    // Present the data to prt rx queue.
+                                    prt_rx_inp[i][(j*8)+:8] = rx_buff_oup[j];
+                                    // Signal to rx buffer to pop this byte.
+                                    rx_buff_pop[j] = 1;
+                                end
                             end
                         end
                     end
@@ -214,7 +223,9 @@ module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
         end
         // If there is not a complete packet in the rx buffer.
         else begin
+`ifdef NIU_DEBUG_LOG
             $display("Checking for pending TX. %t", $time);
+`endif
             // Check if any of the tx ports have anything to send.
             for (int i = 0; i < PORTS; i = i + 1) begin
                 // If the tx port queue is not empty & the tx buff can accept the packet it wants to send.
@@ -223,7 +234,7 @@ module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
                     for (int j = 0; j < 35; j = j + 1) begin
                         if (j < prt_tx_oup[i][7:0]) begin
                             // Present the byte to the tx buffer.
-                            tx_buff_inp[j] = prt_tx_oup[i][j+:8];
+                            tx_buff_inp[j] = prt_tx_oup[i][(j*8)+:8];
                             // Tell tx buff to push the byte.
                             tx_buff_push[j] = 1;
                         end

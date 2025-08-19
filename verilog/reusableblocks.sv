@@ -144,6 +144,7 @@ module fifo_sr #(parameter WIDTH, DEPTH, HEADS, TAILS)(
             // If the position wants to pop & the sr is not empty.
             if (pop[i] & rptr != wptr) begin
                 // Incriment the rptr.
+                data[rptr] = 0;
                 rptr = rptr + 1;
             end
         end
@@ -174,6 +175,9 @@ module fifo_sr #(parameter WIDTH, DEPTH, HEADS, TAILS)(
             rptr = 0;
             data = 0;
             rptr_tmp = 0;
+            dst_num_avail = 0;
+
+            for (int i = 0; i < TAILS; i = i + 1) doup[i] = 0;
         end
     end
 
@@ -288,20 +292,21 @@ module cdc_fifo_sr #(parameter WIDTH, DEPTH, localparam DL2 = $clog2(DEPTH))(
 
     // Async reset.
     always @(posedge drst, srst, dclk, sclk) begin
-        wptr = 0;
-        rptr = 0;
+        if (srst | drst) begin
+            wptr = 0;
+            rptr = 0;
 
-        wptr_bs = 0;
-        rptr_fs = 0;
+            wptr_bs = 0;
+            rptr_fs = 0;
 
-        wptr_bs_gray = 0;
-        wptr_fs_gray = 0;
+            wptr_bs_gray = 0;
+            wptr_fs_gray = 0;
 
-        rptr_bs_gray = 0;
-        rptr_fs_gray = 0;
+            rptr_bs_gray = 0;
+            rptr_fs_gray = 0;
 
-        data = 0;
-
+            data = 0;
+        end
     end
 endmodule
 
@@ -321,8 +326,49 @@ module priority_decoder #(parameter INPUT_WIDTH = 4, OUTPUT_WIDTH = 2)(
     end
 endmodule
 
-
 /*          single input parallel output buffer          */
+module sipo_buffer #(parameter WIDTH, LENGTH)(
+    input logic                             clk,
+    input logic                             rst, 
+
+    input logic                             we,
+    input logic [WIDTH-1:0]                 d_inp,
+    input logic [LENGTH-1:0]                clr_ps,
+
+    output logic [LENGTH-1:0][WIDTH-1:0]    d_oup, 
+    output logic [LENGTH-1:0]               used_pos
+);
+
+logic dn;
+always @(posedge clk) begin
+    // default value.
+    dn = 0;
+
+    // If a write is signalling.
+    if (we) begin
+        for (int i = 0; i < LENGTH; i = i + 1) begin
+            if (!used_pos[i] & !dn) begin d_oup[i] <= d_inp; used_pos[i] = 1; dn = 1; end
+        end
+    end
+
+    // if clr_ps is signalled.
+    for (int i = 0; i < LENGTH; i = i + 1) begin
+        if (clr_ps[i]) begin d_oup[i] <= 0; used_pos[i] <= 0; end
+    end
+end
+
+// Handle reset.
+always @(posedge rst, clk) begin
+    if (rst) begin
+        used_pos <= 0;
+        d_oup <= 0;
+    end
+end
+
+endmodule
+
+
+/*
 module sipo_buffer #(parameter WIDTH, LENGTH)(
     input clk,
     input rst,
@@ -374,7 +420,7 @@ module sipo_buffer #(parameter WIDTH, LENGTH)(
         used_pos = 0;
     end
 endmodule
-
+*/
 
 /*          Register            */
 module register #(parameter WIDTH, RESET_VAL = 'hFFFFFFFF)(
