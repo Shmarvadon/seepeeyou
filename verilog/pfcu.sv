@@ -1,33 +1,36 @@
 `include "structs.svh"
+`include "defines.svh"
+
+//`define PFCU_DEBUG_LOG
 
 module program_flow_control(
-    input   logic               clk,
-    input   logic               rst,
-    input   logic               en,
-    output  logic               dn,
+    input   logic               clk,                // Clock.
+    input   logic               rst,                // Reset.
+    input   logic               en,                 // PFCU enable.
+    output  logic               dn,                 // PFCU done.
 
-    input   queued_instruction  instr,
-    input   logic [7:0]         alu_stat,
-    output  logic               jmp,
-    output  logic [31:0]        new_pc,
+    input   queued_instruction  instr,              // PFCU instruction.
+    input   logic [7:0]         alu_stat,           // ALU status register value.
+    output  logic               jmp,                // Jump signal.
+    output  logic [31:0]        new_pc,             // new program counter value.
 
-    output  logic               shp_we,
-    output  logic [31:0]        shp_inp,
-    input   logic [31:0]        shp_oup,
+    output  logic               shp_we,             // Stack head pointer write enable.
+    output  logic [31:0]        shp_inp,            // Stack head pointer data input.
+    input   logic [31:0]        shp_oup,            // Stack head pointer data output.
 
     // Interface to the memory subsystem.
-    output  logic               mac_prt_tx_rp,
-    output  line_acc_req        mac_prt_tx_req,
-    input   logic               mac_prt_tx_ra,
+    output  logic               mac_prt_tx_rp,      // Mem acc cont tx request present.
+    output  line_acc_req        mac_prt_tx_req,     // Mem acc cont tx request.
+    input   logic               mac_prt_tx_ra,      // Mem acc cont tx request accepted.
 
-    input   logic               mac_prt_rx_rp,
-    input   line_acc_req        mac_prt_rx_req,
-    output  logic               mac_prt_rx_ra
+    input   logic               mac_prt_rx_rp,      // Mem acc cont rx present.
+    input   line_acc_req        mac_prt_rx_req,     // Mem acc cont rx data.
+    output  logic               mac_prt_rx_ra       // Mem acc cont rx accepted.
 );
 
-logic [31:0] curr_pc;
-int byte_cnt;
-logic [3:0] state;
+logic [31:0]    curr_pc;
+int             byte_cnt;
+logic [3:0]     state;
 always @(posedge clk) begin
     // Default values.
     jmp <= 0;
@@ -45,8 +48,9 @@ always @(posedge clk) begin
         // JMP k
         5'b00001:
         begin
+            `ifdef PFCU_DEBUG_LOG
             $display("Exec PFCU JMP K(0x%h) IP:0x%h %t", instr.bits[8+:32], instr.addr, $time);
-            
+            `endif
             if (instr.bits == 40'b0000_0000_0000_0000_0000_0000_1011_1001_0000_1110) begin $display("Program Finished %t", $time); $stop; end
             // Present new pc, signal jump & done.
             new_pc <= instr.bits[47:8];
@@ -57,8 +61,9 @@ always @(posedge clk) begin
         // JIZ k
         5'b10001:
         begin
+            `ifdef PFCU_DEBUG_LOG
             $display("Exec PFCU JIZ k(0x%h) IP:0x%h %t", instr.bits[8+:32], instr.addr, $time);
-
+            `endif
             // Check if ALU status [0] is set (last alu result = 0).
             if (alu_stat[0]) begin
                 // Present new pc and signal jump
@@ -72,16 +77,17 @@ always @(posedge clk) begin
         // GOT k
         5'b01001:
         begin
+            `ifdef PFCU_DEBUG_LOG
             $display("Exec PFCU GOT k(0x%h) IP:0x%h %t", instr.bits[8+:32], instr.addr, $time);
-
+            `endif
             // prepare new stack head pointer value.
             shp_inp = shp_oup - 4;
 
             // Check if an aligned write can be done.
             if (shp_inp[31:4] == shp_oup[31:4]) begin
-
+                `ifdef PFCU_DEBUG_LOG
                 $display("Aligned PFCU GOT can be performed.");
-                
+                `endif
                 // If the cmac accepts the request.
                 if (mac_prt_tx_ra) begin
                     // Signal done.
@@ -116,8 +122,9 @@ always @(posedge clk) begin
             end
             // If an aligned write can not be performend.
             else begin
-
+                `ifdef PFCU_DEBUG_LOG
                 $display("Aligned PFCU GOT k can not be performed.");
+                `endif
                 case(state)
                 // First line write (top).
                 0:
@@ -196,8 +203,9 @@ always @(posedge clk) begin
         // RET
         5'b11000:
         begin
+            `ifdef PFCU_DEBUG_LOG
             $display ("Exec PFCU RET IP:0x%h %t", instr.addr, $time);
-
+            `endif
             // Prepare new stack head pointer value.
             shp_inp = shp_oup + 4;
 
@@ -209,8 +217,6 @@ always @(posedge clk) begin
                 // State 0 (request to read the line).
                 0:
                 begin
-
-                    $display("In state 0 %t", $time);
                     // If the cmac accepts the request.
                     if (mac_prt_tx_ra) begin
                         state <= 1;
@@ -337,5 +343,4 @@ always @(posedge clk) begin
         state <= 0;
     end
 end
-
 endmodule

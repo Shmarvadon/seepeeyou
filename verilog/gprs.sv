@@ -1,11 +1,11 @@
 
 module general_purpose_registers(
-    input   logic           clk,
-    input   logic           rst,
-    
-    input   logic  [15:0]   we,
-    input   logic  [31:0]   inp [15:0],
-    output  logic [31:0]      oup [15:0]
+    input   logic           clk,        // Clock.
+    input   logic           rst,        // Reset.
+
+    input   logic  [15:0]   we,         // Write enable.
+    input   logic  [31:0]   inp [15:0], // Data input.
+    output  logic  [31:0]   oup [15:0]  // Data output.
 );
 
 // The registers.

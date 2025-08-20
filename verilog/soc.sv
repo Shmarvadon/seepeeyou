@@ -1,13 +1,9 @@
-`define INSTRUCTION_QUEUE_LENGTH 64
-`define INSTRUCTION_QUEUE_INPUT_WIDTH 16
-
-
 `include "structs.svh"
 `include "defines.svh"
 `timescale 1ps/1ps
 
 module soc(
-    input rst,
+    input logic rst,
 
     output logic [31:0] mem_addr_sel,
     inout logic [127:0] mem_dat,
@@ -32,7 +28,7 @@ always begin
     #30 mclk =~mclk;    //60
 end
 
-always @(posedge cclk) $display("clock! %t", $time);
+//always @(posedge cclk) $display("clock! %t", $time);
 
 // From core to IMC.
 logic [31:0][7:0] noc_bus_inp_dat;

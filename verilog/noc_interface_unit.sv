@@ -1,36 +1,37 @@
 `include "structs.svh"
+`include "defines.svh"
 
-`define NIU_DEBUG_LOG
+//`define NIU_DEBUG_LOG
 
 module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
-    input ipclk,    // IP block clock.
-    input fclk,     // Bus clock.
-    input rst,
+    input   logic                   ipclk,          // IP block clock.
+    input   logic                   fclk,           // Bus clock.
+    input   logic                   rst,            // Reset.
 
     // Interface to the IP blocks.
-    output  logic [PORTS-1:0][3:0]  prt_addr,
-    output  logic [PORTS-1:0][3:0]  prt_num,
+    output  logic [PORTS-1:0][3:0]  prt_addr,       // NIU address.
+    output  logic [PORTS-1:0][3:0]  prt_num,        // NIU port(s) number(s).
 
-    output  logic [PORTS-1:0]       rx_av,
-    input   logic [PORTS-1:0]       rx_re,
-    output  noc_packet [PORTS-1:0]  rx_dat,
+    output  logic [PORTS-1:0]       rx_av,          // NIU port(s) rx available.
+    input   logic [PORTS-1:0]       rx_re,          // NIU port(s) rx read.
+    output  noc_packet [PORTS-1:0]  rx_dat,         // NIU port(s) rx data.
 
-    input   logic [PORTS-1:0]       tx_av,
-    output  logic [PORTS-1:0]       tx_re,
-    input   noc_packet [PORTS-1:0]  tx_dat,
+    input   logic [PORTS-1:0]       tx_av,          // NIU port(s) tx available.
+    output  logic [PORTS-1:0]       tx_re,          // NIU port(s) tx read.
+    input   noc_packet [PORTS-1:0]  tx_dat,         // NIU port(s) tx data.
 
 
     // Interface to the NOC bus.
 
     // Input to this NIU.
-    input logic [31:0][7:0]     bus_inp_dat,    // Input bus data.
-    input logic [5:0]           bus_inp_bp,     // Input bus bytes present.
-    output logic                bus_inp_bo,     // Input bus open.
+    input   logic [31:0][7:0]       bus_inp_dat,    // Input bus data.
+    input   logic [5:0]             bus_inp_bp,     // Input bus bytes present.
+    output  logic                   bus_inp_bo,     // Input bus open.
 
     // Output from this NIU.
-    output logic [31:0][7:0]    bus_oup_dat,    // Output bus data.
-    output logic [5:0]          bus_oup_bp,     // Output bus bytes present.
-    input logic                 bus_oup_bo      // Output bus open.
+    output  logic [31:0][7:0]       bus_oup_dat,    // Output bus data.
+    output  logic [5:0]             bus_oup_bp,     // Output bus bytes present.
+    input   logic                   bus_oup_bo      // Output bus open.
 );
 
     // Check that params are good.
@@ -165,15 +166,15 @@ module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
         prt_tx_accepted = 0;
         tx_buff_inp = 0;
         prt_rx_inp = 0;
-`ifdef NIU_DEBUG_LOG
+        `ifdef NIU_DEBUG_LOG
         $display("This Ran.");
-`endif
+        `endif
 
         // Check if the entire packet is present in the buffer.
         if (rx_buff_dst_num_avail >= rx_buff_oup[0] && rx_buff_dst_num_avail != 0) begin
-`ifdef NIU_DEBUG_LOG
+            `ifdef NIU_DEBUG_LOG
             $display("Found a packet in rx buffer");
-`endif
+            `endif
             // Check if the packet is destined for this NIU.
             if (rx_buff_oup[1][7:4] == ADDR) begin
                 // Present the rx to the appropriate port's rx queue.
@@ -223,9 +224,9 @@ module network_interface_unit #(parameter PORTS = 1, ADDR = 0)(
         end
         // If there is not a complete packet in the rx buffer.
         else begin
-`ifdef NIU_DEBUG_LOG
+            `ifdef NIU_DEBUG_LOG
             $display("Checking for pending TX. %t", $time);
-`endif
+            `endif
             // Check if any of the tx ports have anything to send.
             for (int i = 0; i < PORTS; i = i + 1) begin
                 // If the tx port queue is not empty & the tx buff can accept the packet it wants to send.

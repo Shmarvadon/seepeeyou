@@ -84,5 +84,11 @@ typedef struct packed {
     bit [3:0] len;
 } queued_instruction;
 
+typedef struct packed{  // MSB
+    logic [4:0] operand_b;
+    logic [4:0] operand_a;
+    logic [3:0] operation;
+    logic [1:0] unit;
+} dec_inst;             // LSB
 
 

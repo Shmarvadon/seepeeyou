@@ -1,3 +1,4 @@
+/*          Instruction decode defines          */
 `define INSTRUCTION_QUEUE_LENGTH 64
 `define INSTRUCTION_QUEUE_INPUT_WIDTH 16
 

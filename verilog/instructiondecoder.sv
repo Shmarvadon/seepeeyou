@@ -1,28 +1,29 @@
 `include "structs.svh"
+`include "defines.svh"
 
-`define IFE_DEBUG_LOG
+//`define IFE_DEBUG_LOG
 
 module instruction_front_end #(parameter IQ_LEN = 8, IDB_LEN = 64)(
-    input logic clk,
-    input logic rst,
+    input   logic               clk,                // Clock.
+    input   logic               rst,                // Reset.
 
     // Interfaces to the back side of CPU core.
 
-    input logic [31:0] pc_inp,
-    input logic        jmp,
+    input   logic [31:0]        pc_inp,             // input to program counter register.
+    input   logic               jmp,                // Jump signal.
 
-    output queued_instruction   iq_oup,
-    output logic                iq_ip,
-    input  logic                iq_pop,
+    output  queued_instruction  iq_oup,             // Instruction queue output.
+    output  logic               iq_ip,              // Instruction queue instruction present.
+    input   logic               iq_pop,             // Instruction queue pop.
 
     // Interface to the memory subsystem.
-    output logic                mac_prt_tx_rp,
-    output line_acc_req         mac_prt_tx_req,
-    input logic                 mac_prt_tx_op,
+    output  logic               mac_prt_tx_rp,      // Mem acc cont tx request present.
+    output  line_acc_req        mac_prt_tx_req,     // Mem acc cont tx request.
+    input   logic               mac_prt_tx_ra,      // Mem acc cont tx request accepted.
 
-    input logic                 mac_prt_rx_rp,
-    input line_acc_req          mac_prt_rx_req,
-    output logic                mac_prt_rx_op
+    input   logic               mac_prt_rx_rp,      // Mem acc cont rx present.
+    input   line_acc_req        mac_prt_rx_req,     // Mem acc cont rx data.
+    output  logic               mac_prt_rx_ra       // Mem acc cont rx accepted.
 );
     // Localparams (stuff to be tweaked globally not per instantiation).
     localparam MAX_INST_LEN = 8;
@@ -47,7 +48,7 @@ module instruction_front_end #(parameter IQ_LEN = 8, IDB_LEN = 64)(
     fifo_sr #(8, IDB_LEN, 16, MAX_INST_LEN) idb(clk, idb_rst, idb_push, idb_inp, idb_src_num_avail, idb_pop, idb_oup, idb_dst_num_avail);
 
     // Instruction bytes fetcher.
-    instruction_fetch #(IDB_LEN, 16) ibf(clk, ibf_rst, mac_prt_tx_rp, mac_prt_tx_req, mac_prt_tx_op, mac_prt_rx_rp, mac_prt_rx_req, mac_prt_rx_op, idb_src_num_avail, idb_dst_num_avail, idbba, idb_inp, idb_push);
+    instruction_fetch #(IDB_LEN, 16) ibf(clk, ibf_rst, mac_prt_tx_rp, mac_prt_tx_req, mac_prt_tx_ra, mac_prt_rx_rp, mac_prt_rx_req, mac_prt_rx_ra, idb_src_num_avail, idb_dst_num_avail, idbba, idb_inp, idb_push);
 
     // Instruction decoder.
     logic [$bits(queued_instruction)-1:0]       decoded_inst;   // Decoded instruction.
@@ -101,26 +102,25 @@ module instruction_front_end #(parameter IQ_LEN = 8, IDB_LEN = 64)(
         ibf_rst <= 0;
         iq_rst <= 0;
     end
-
 endmodule
 
 // Very simple for now, focusing on measuring matmul perf with cache before moving to ucode based decode.
 module instruction_decoder #(parameter IB_INP_LEN = 8, IDB_LEN = 64)(
-    input logic                                     clk,
-    input logic                                     rst,
+    input   logic                                     clk,      // Clock.
+    input   logic                                     rst,      // Reset.
 
     // Connections to the instruction byte buffer.
-    input logic [IB_INP_LEN-1:0][7:0]               ib,       // Instruction bytes.
-    input logic [$clog2(IDB_LEN):0]                 iba,      // Instruction bytes available.
-    output logic [IB_INP_LEN-1:0]                   ibp,      // Pop Instruction bytes.
+    input   logic [IB_INP_LEN-1:0][7:0]               ib,       // Instruction bytes.
+    input   logic [$clog2(IDB_LEN):0]                 iba,      // Instruction bytes available.
+    output  logic [IB_INP_LEN-1:0]                    ibp,      // Pop Instruction bytes.
 
     // Connections to the instruction queue.
-    output logic [$bits(queued_instruction)-1:0]    dio,      // Decoded instruction output.
-    output logic                                    dip,      // Decoded instruction present.
-    input logic                                     iqf,      // Decoded instruction queue full.
+    output  logic [$bits(queued_instruction)-1:0]     dio,      // Decoded instruction output.
+    output  logic                                     dip,      // Decoded instruction present.
+    input   logic                                     iqf,      // Decoded instruction queue full.
 
     // Other connections to instruction front end module.
-    input logic [31:0]                              idbba     // Instruction decode buffer base address.
+    input   logic [31:0]                              idbba     // Instruction decode buffer base address.
 );
 
     queued_instruction decoded_instruction;
@@ -138,15 +138,15 @@ module instruction_decoder #(parameter IB_INP_LEN = 8, IDB_LEN = 64)(
         // ALU instruction
         3'b100:
         begin
-`ifdef IFE_DEBUG_LOG
+            `ifdef IFE_DEBUG_LOG
             $display("Decoding ALU instruction at %h", idbba);
-`endif
+            `endif
 
             // If the instruction is an immediate & enough bytes are present to fully decode & instruction queue isnt full.
             if (ib[0][3] & iba >= 6 & !iqf) begin
-`ifdef IFE_DEBUG_LOG
+                `ifdef IFE_DEBUG_LOG
                 $display("6 byte inst.");
-`endif
+                `endif
                 // Send on over the instruction bytes & signal a pop for next clk from idb.
                 for (int i = 0; i < 6; i = i + 1) begin
                     decoded_instruction.bits[(i * 8)+:8] = ib[i];
@@ -178,9 +178,9 @@ module instruction_decoder #(parameter IB_INP_LEN = 8, IDB_LEN = 64)(
         // Memory & IO instruction
         3'b010:
         begin
-`ifdef IFE_DEBUG_LOG
+            `ifdef IFE_DEBUG_LOG
             $display("Decoding Memory & IO instruction at %h", idbba);
-`endif
+            `endif
             // If the instruction is an immediate.
             if (!ib[0][3] & !iqf) begin
                 // If the instruction is lod / str
@@ -235,9 +235,9 @@ module instruction_decoder #(parameter IB_INP_LEN = 8, IDB_LEN = 64)(
         // Program flow control instruction
         3'b110:
         begin
-`ifdef IFE_DEBUG_LOG
+            `ifdef IFE_DEBUG_LOG
             $display("Decoding Program Flow Control instruction at %h", idbba);
-`endif
+            `endif
             // If the instruction is an immediate.
             if (ib[0][3] & !iqf & iba >= 5) begin
                 // Send on over the instruction bytes & signal a pop for next clk from idb.
@@ -271,24 +271,24 @@ module instruction_decoder #(parameter IB_INP_LEN = 8, IDB_LEN = 64)(
 endmodule
 
 module instruction_fetch #(parameter IDB_SIZE = 64, IDB_HEAD_COUNT = 16)(
-    input logic clk,
-    input logic rst,
+    input   logic                                   clk,                // Clock
+    input   logic                                   rst,                // Reset.
 
     // Interface to the memory subsystem.
-    output logic                mac_prt_tx_rp,
-    output line_acc_req         mac_prt_tx_req,
-    input logic                 mac_prt_tx_op,
+    output  logic                                   mac_prt_tx_rp,      // Mem acc cont tx request present.
+    output  line_acc_req                            mac_prt_tx_req,     // Mem acc cont tx request.
+    input   logic                                   mac_prt_tx_op,      // Mem acc cont tx port open.
 
-    input logic                 mac_prt_rx_rp,
-    input line_acc_req          mac_prt_rx_req,
-    output logic                mac_prt_rx_op,
+    input   logic                                   mac_prt_rx_rp,      // Mem acc cont rx present.
+    input   line_acc_req                            mac_prt_rx_req,     // Mem acc cont rx data.
+    output  logic                                   mac_prt_rx_op,      // Mem acc cont rx port open.
 
     // Interface to the instruction decode bytes buffer.
-    input logic [$clog2(IDB_SIZE):0]            idb_src_num_avail,  // How many bytes can be pushed to at the moment.
-    input logic [$clog2(IDB_SIZE):0]            idb_dst_num_avail,  // Current length of the shift reg.
-    input logic [31:0]                          idbba,              // decode buffer base address.
-    output logic [IDB_HEAD_COUNT-1:0][7:0]      idb_inp,            // Instruction decode buffer input heads.
-    output logic [IDB_HEAD_COUNT-1:0]           idb_push            // Instruction decode buffer push.
+    input   logic [$clog2(IDB_SIZE):0]              idb_src_num_avail,  // How many bytes can be pushed to at the moment.
+    input   logic [$clog2(IDB_SIZE):0]              idb_dst_num_avail,  // Current length of the shift reg.
+    input   logic [31:0]                            idbba,              // decode buffer base address.
+    output  logic [IDB_HEAD_COUNT-1:0][7:0]         idb_inp,            // Instruction decode buffer input heads.
+    output  logic [IDB_HEAD_COUNT-1:0]              idb_push            // Instruction decode buffer push.
 );
     // local parameters.
     localparam IFQ_LEN = 4;
@@ -343,20 +343,20 @@ module instruction_fetch #(parameter IDB_SIZE = 64, IDB_HEAD_COUNT = 16)(
                 for (int j = 0; j < 16; j = j + 1) begin
                     if (ifq_oup[i].rmsk[j]) current_fetch_addr = current_fetch_addr + 1;
                 end
-`ifdef IFE_DEBUG_LOG
+                `ifdef IFE_DEBUG_LOG
                 $display("Current Fetch Address: %d", current_fetch_addr);
-`endif
+                `endif
             end
 
         end
-`ifdef IFE_DEBUG_LOG
+        `ifdef IFE_DEBUG_LOG
         $display("Current Fetch Addr: %d", current_fetch_addr);
-`endif
+        `endif
         current_fetch_addr = current_fetch_addr + idbba + idb_dst_num_avail;
-`ifdef IFE_DEBUG_LOG
+        `ifdef IFE_DEBUG_LOG
         $display("Current Fetch Addr: %d", current_fetch_addr);
         $display("Current Fetch Addr: %b", current_fetch_addr[31:4]);
-`endif
+        `endif
 
         if (idb_src_num_avail >= 16 & ifq_src_num_avail > 0) begin
             // Setup the ifq input.

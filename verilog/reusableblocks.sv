@@ -1,104 +1,18 @@
 
-/*          fifo queue           */
-module fifo_queue #(parameter WIDTH, LENGTH)(
-    input                           clk,
-    input                           rst,
-    
-    input [WIDTH-1:0]               d_in,
-    output [WIDTH-1:0]              d_out,
-    output bit [$clog2(LENGTH):0]   used_pos,
-
-    input                           we,
-    input                           se
-);
-
-    bit [WIDTH-1:0] dat [LENGTH];
-    assign d_out = dat[0];
-
-
-    // handle input & output.
-    integer i;
-    always @(posedge clk) begin
-        
-        case ({se, we})
-
-            // Doing nothing.
-            2'b00:
-            begin
-            end
-
-            // Just writing new value.
-            2'b01:
-            begin
-                if (used_pos < LENGTH) begin
-                    // Write the new value & incriment the number of used positions.
-                    dat[used_pos] <= d_in;
-                    used_pos <= used_pos + 1;
-                end
-            end
-
-            // Just outputting.
-            2'b10:
-            begin
-                if (used_pos != 0) begin
-                    // Shift the values.
-                    for (i = 0; i < LENGTH; i = i + 1) begin
-                        dat[i] <= dat[i + 1];
-                    end
-
-                    // Decriment the used_pos variable.
-                    used_pos <= used_pos - 1;
-                end
-            end
-
-            // Outputting & Writing.
-            2'b11:
-            begin
-                // If we have between 1 and 7 values stored.
-                if (used_pos != 0 && used_pos < LENGTH) begin
-                    // Shift existing values.  
-                    for (i = 0; i < used_pos-1; i = i + 1) begin
-                        dat[i] <= dat[i + 1];
-                    end
-
-                    // Append new value.
-                    dat[used_pos-1] <= d_in;
-                end
-                if (used_pos == 0) begin
-                    // Store the value.
-                    dat[used_pos] <= d_in;
-
-                    // Incriment used_pos.
-                    used_pos <= used_pos + 1;
-                end
-            end
-        endcase
-    end
-
-
-    // Handle reset.
-    always @(posedge rst) begin
-        for (i = 0; i < LENGTH; i = i + 1) begin
-            dat[i] = 0;
-        end
-
-        used_pos = 0;
-    end
-endmodule
-
+/*          first in first out shift register          */
 module fifo_sr #(parameter WIDTH, DEPTH, HEADS, TAILS)(
-    input logic clk,
-    input logic rst,
+    input   logic                               clk,            // Clock.
+    input   logic                               rst,            // Reset.
 
     // Source signals.
-    input logic  [HEADS-1:0]                push,
-    input logic  [HEADS-1:0][WIDTH-1:0]     dinp,
-    output logic [$clog2(DEPTH):0]          src_num_avail,
+    input   logic  [HEADS-1:0]                  push,           // Push.
+    input   logic  [HEADS-1:0][WIDTH-1:0]       dinp,           // Data input.
+    output  logic [$clog2(DEPTH):0]             src_num_avail,  // number of spaces unoccupied.
 
     // Destination signals.
-    input logic  [TAILS-1:0]                pop,
-    output logic [TAILS-1:0][WIDTH-1:0]     doup,
-    output logic [$clog2(DEPTH):0]          dst_num_avail
+    input   logic  [TAILS-1:0]                  pop,            // pop.
+    output  logic [TAILS-1:0][WIDTH-1:0]        doup,           // Data output.
+    output  logic [$clog2(DEPTH):0]             dst_num_avail   // number of spaces occupied.
 );
     // Check that parameters are required values.
 
@@ -171,36 +85,37 @@ module fifo_sr #(parameter WIDTH, DEPTH, HEADS, TAILS)(
     // Async reset.
     always @(posedge rst, clk) begin
         if (rst) begin
-            wptr = 0;
-            rptr = 0;
-            data = 0;
-            rptr_tmp = 0;
-            dst_num_avail = 0;
+            wptr <= 0;
+            rptr <= 0;
+            data <= 0;
+            rptr_tmp <= 0;
+            dst_num_avail <= 0;
 
             for (int i = 0; i < TAILS; i = i + 1) doup[i] = 0;
         end
     end
-
 endmodule
 
+
+/*          first in first out shift register that crosses clock domain         */
 module cdc_fifo_sr #(parameter WIDTH, DEPTH, localparam DL2 = $clog2(DEPTH))(
-    input logic                 sclk,               // Source clock.
-    input logic                 srst,               // Source reset.
-    input logic                 dclk,               // Destination clock.
-    input logic                 drst,               // Destination reset.
+    input   logic               sclk,               // Source clock.
+    input   logic               srst,               // Source reset.
+    input   logic               dclk,               // Destination clock.
+    input   logic               drst,               // Destination reset.
 
     // source clock signals.
-    input logic [WIDTH-1:0]     dinp,               // Data input
-    input logic                 push,               // Push.
-    output logic [DL2:0]        src_num_avail,      // Source number available.
-    output logic                src_full,           // Source full.
+    input   logic [WIDTH-1:0]   dinp,               // Data input
+    input   logic               push,               // Push.
+    output  logic [DL2:0]       src_num_avail,      // Source number available.
+    output  logic               src_full,           // Source full.
 
 
     // destination clock signals.
-    output logic [WIDTH-1:0]    doup,               // Data output.
-    input logic                 pop,                // Pop.
-    output logic [DL2:0]        dst_num_avail,      // Destination number available.
-    output logic                dst_empty           // Destination empty.
+    output  logic [WIDTH-1:0]   doup,               // Data output.
+    input   logic               pop,                // Pop.
+    output  logic [DL2:0]       dst_num_avail,      // Destination number available.
+    output  logic               dst_empty           // Destination empty.
 );
 
     // Ensure that DEPTH parameter is a power of 2.
@@ -293,144 +208,74 @@ module cdc_fifo_sr #(parameter WIDTH, DEPTH, localparam DL2 = $clog2(DEPTH))(
     // Async reset.
     always @(posedge drst, srst, dclk, sclk) begin
         if (srst | drst) begin
-            wptr = 0;
-            rptr = 0;
+            wptr <= 0;
+            rptr <= 0;
 
-            wptr_bs = 0;
-            rptr_fs = 0;
+            wptr_bs <= 0;
+            rptr_fs <= 0;
 
-            wptr_bs_gray = 0;
+            wptr_bs_gray <= 0;
             wptr_fs_gray = 0;
 
-            rptr_bs_gray = 0;
-            rptr_fs_gray = 0;
+            rptr_bs_gray <= 0;
+            rptr_fs_gray <= 0;
 
-            data = 0;
+            data <= 0;
         end
     end
 endmodule
 
-/*          Priority decoder            */
-module priority_decoder #(parameter INPUT_WIDTH = 4, OUTPUT_WIDTH = 2)(
-    input logic [INPUT_WIDTH] inp,
-    output logic [OUTPUT_WIDTH] oup
-);
-
-    // Decode the priority.
-    integer i;
-    always_comb begin
-        // Last assignment wins in always block so we just do simple loop to find highest priority bit.
-        for (i = 0; i <= INPUT_WIDTH; i = i + 1) begin
-            if (inp[i]) oup = i;
-        end
-    end
-endmodule
 
 /*          single input parallel output buffer          */
 module sipo_buffer #(parameter WIDTH, LENGTH)(
-    input logic                             clk,
-    input logic                             rst, 
+    input   logic                             clk,        // Clock.
+    input   logic                             rst,        // Reset.
+    
+    input   logic                             we,         // Write enable.
+    input    logic [WIDTH-1:0]                d_inp,      // Data input.
+    input   logic [LENGTH-1:0]                clr_ps,     // Clear position(s).
 
-    input logic                             we,
-    input logic [WIDTH-1:0]                 d_inp,
-    input logic [LENGTH-1:0]                clr_ps,
-
-    output logic [LENGTH-1:0][WIDTH-1:0]    d_oup, 
-    output logic [LENGTH-1:0]               used_pos
+    output logic [LENGTH-1:0][WIDTH-1:0]      d_oup,      // Data output.
+    output logic [LENGTH-1:0]                 used_pos    // Used Positions.
 );
 
-logic dn;
-always @(posedge clk) begin
-    // default value.
-    dn = 0;
-
-    // If a write is signalling.
-    if (we) begin
-        for (int i = 0; i < LENGTH; i = i + 1) begin
-            if (!used_pos[i] & !dn) begin d_oup[i] <= d_inp; used_pos[i] = 1; dn = 1; end
-        end
-    end
-
-    // if clr_ps is signalled.
-    for (int i = 0; i < LENGTH; i = i + 1) begin
-        if (clr_ps[i]) begin d_oup[i] <= 0; used_pos[i] <= 0; end
-    end
-end
-
-// Handle reset.
-always @(posedge rst, clk) begin
-    if (rst) begin
-        used_pos <= 0;
-        d_oup <= 0;
-    end
-end
-
-endmodule
-
-
-/*
-module sipo_buffer #(parameter WIDTH, LENGTH)(
-    input clk,
-    input rst,
-
-    input we,
-
-    input [WIDTH-1:0] d_in,
-    input [LENGTH-1:0] clr_ps,
-
-    output logic [WIDTH-1:0] d_oup [LENGTH-1:0],
-    output bit [LENGTH-1:0] used_pos
-);
-
-    // Priority decoder to figure out which slot is free.
-    bit [LENGTH] pri_dec_inp;
-    bit [$clog2(LENGTH)+1] pri_dec_oup;
-    priority_decoder #(LENGTH, $clog2(LENGTH)+1) pri_dec(pri_dec_inp, pri_dec_oup);
-    integer i;
-    always_comb begin
-        for (i = 0; i < LENGTH; i = i + 1) begin
-            if (used_pos[i]) pri_dec_inp[i] = 0;
-            else pri_dec_inp[i] = 1;
-        end
-    end
-
-    // Handle input to the buffer & erasure of items.
-    integer j;
+    logic dn;
     always @(posedge clk) begin
-        // Loop over all the data positions and erase them if clr_ps is high.
-        for (j = 0; j < LENGTH; j = j + 1) begin
-            if (clr_ps[j]) used_pos[j] = 0;
+        // default value.
+        dn = 0;
+
+        // If a write is signalling.
+        if (we) begin
+            for (int i = 0; i < LENGTH; i = i + 1) begin
+                if (!used_pos[i] & !dn) begin d_oup[i] <= d_inp; used_pos[i] = 1; dn = 1; end
+            end
         end
 
-        // If we is high.
-        if (we) begin
-            // Shift data into the desired slot.
-            d_oup[pri_dec_oup] = d_in;
-            // mark the slot as in use.
-            used_pos[pri_dec_oup] = 1;
+        // if clr_ps is signalled.
+        for (int i = 0; i < LENGTH; i = i + 1) begin
+            if (clr_ps[i]) begin d_oup[i] <= 0; used_pos[i] <= 0; end
         end
     end
 
-    // handle reset.
-    integer k;
-    always @(posedge rst) begin
-        // Zero the data registers.
-        for (k = 0; k < LENGTH; k = k + 1) d_oup[k] = 0;
-        // Zero the used positions register.
-        used_pos = 0;
+    // Handle reset.
+    always @(posedge rst, clk) begin
+        if (rst) begin
+            used_pos <= 0;
+            d_oup <= 0;
+        end
     end
 endmodule
-*/
+
 
 /*          Register            */
 module register #(parameter WIDTH, RESET_VAL = 'hFFFFFFFF)(
-    input clk,
-    input rst,
+    input   logic               clk,    // Clock.
+    input   logic               rst,    // Reset.
 
-    input [WIDTH-1:0] inp,
-    output bit [WIDTH-1:0] oup,
+    input   logic [WIDTH-1:0]   inp,    // Data input.
+    output  bit [WIDTH-1:0]     oup,    // Data output.
 
-    input we
+    input   logic               we      // Write enable.
 );
 
     always @(posedge clk) begin
@@ -439,63 +284,11 @@ module register #(parameter WIDTH, RESET_VAL = 'hFFFFFFFF)(
     end
 
     // handle reset.
-    always @(posedge rst) begin
-        oup <= RESET_VAL;
+    always @(posedge rst, clk) begin
+        if (rst) oup <= RESET_VAL;
     end
 endmodule
 
-
-/*          Mux         */
-module multiplexer #(parameter INPUT_WIDTH, INPUT_COUNT)(
-    // Inputs to the mux.
-    input [INPUT_WIDTH-1:0]         mux_inp [INPUT_COUNT-1:0],
-    input [$clog2(INPUT_COUNT)-1:0] inp_sel,
-
-    // Outputs.
-    output bit [INPUT_WIDTH-1:0]    mux_oup
-);
-
-    always_latch begin
-        mux_oup = mux_inp[inp_sel];
-    end
-
-endmodule
-
-
-/*          De-mux         */
-module demultiplexer #(parameter INPUT_WIDTH, OUTPUT_COUNT)(
-    // Inputs to the mux.
-    input [INPUT_WIDTH-1:0]         demux_inp,
-    input [$clog2(OUTPUT_COUNT)-1:0] oup_sel,
-
-    // Outputs.
-    output bit [INPUT_WIDTH-1:0]    demux_oup [OUTPUT_COUNT-1:0]
-);
-
-    always_comb begin
-        for (int i = 0; i < OUTPUT_COUNT; i = i + 1) begin
-            if (oup_sel == i) demux_oup[i] = demux_inp;
-            else demux_oup[i] = 0;
-        end
-    end
-    
-endmodule
-
-module demultiplexer_packed #(parameter OUTPUT_COUNT)(
-    // Inputs to the mux.
-    input                            mux_inp,
-    input [$clog2(OUTPUT_COUNT)-1:0] oup_sel,
-
-    // Outputs.
-    output bit [OUTPUT_COUNT-1:0]    mux_oup
-);
-
-    always_comb begin
-        mux_oup = 0;
-        mux_oup[oup_sel] = mux_inp;
-    end
-    
-endmodule
 
 /*          Gray code counter           */
 //***************** FINISH THIS LATER.

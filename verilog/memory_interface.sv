@@ -1,28 +1,30 @@
 `include "structs.svh"
 `include "defines.svh"
 
+//`define MEMINT_DEBUG_LOG
+
 module memory_interface(
-    input logic rst,
-    input logic fclk,
-    input logic mclk,
+    input   logic               rst,            // Reset.
+    input   logic               fclk,           // Fabric clock.
+    input   logic               mclk,           // memory clock.
 
     // Interface to the NOC.
 
-    input logic [31:0][7:0]     bus_inp_dat,    // Input bus data.
-    input logic [5:0]           bus_inp_bp,     // Input bus bytes present.
-    output logic                bus_inp_bo,     // Input bus open.
+    input   logic [31:0][7:0]   bus_inp_dat,    // Input bus data.
+    input   logic [5:0]         bus_inp_bp,     // Input bus bytes present.
+    output  logic               bus_inp_bo,     // Input bus open.
 
-    output logic [31:0][7:0]    bus_oup_dat,    // Output bus data.
-    output logic [5:0]          bus_oup_bp,     // Output bus bytes present.
-    input logic                 bus_oup_bo,      // Output bus open.
+    output  logic [31:0][7:0]   bus_oup_dat,    // Output bus data.
+    output  logic [5:0]         bus_oup_bp,     // Output bus bytes present.
+    input   logic               bus_oup_bo,     // Output bus open.
 
     // Interface to memory.
-    output logic mem_en,
-    output logic mem_we,
-    output logic mem_re,
+    output  logic               mem_en,         // Memory enable.
+    output  logic               mem_we,         // Memory write enable.
+    output  logic               mem_re,         // Memory read enable.
 
-    output logic [31:0] mem_addr_sel,
-    input logic [127:0] mem_dat
+    output  logic [31:0]        mem_addr_sel,   // Memory address bus.
+    input   logic [127:0]       mem_dat         // Memory data bus.
 );
 
     /*          Network Interface Unit          */
@@ -80,9 +82,9 @@ module memory_interface(
 
             // If the request is a write.
             if(niu_rx_dat[0].dat[7:0] == memory_write_request) begin
-
+                `ifdef MEMINT_DEBUG_LOG
                 $display("Processing DRAM write request, %t", $time);
-
+                `endif
                 // Present memory address.
                 mem_addr_sel <= wr_rq_rx.addr;
 
@@ -100,8 +102,9 @@ module memory_interface(
 
             // If the request is a read.
             if (niu_rx_dat[0].dat[7:0] == memory_read_request) begin
-
+                `ifdef MEMINT_DEBUG_LOG
                 $display("Processing DRAM read request, %t", $time);
+                `endif
                 case(state)
                 // Read the line from RAM.
                 0:
@@ -159,5 +162,4 @@ module memory_interface(
             end
         end
     end
-
 endmodule

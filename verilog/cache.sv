@@ -1,8 +1,9 @@
 // https://verificationacademy.com/forums/t/blocking-or-non-blocking-statement-vs/42389    dave_59
 // Big up dave_59, that man has all the wisdom in the world.
 `include "structs.svh"
+`include "defines.svh"
 
-`define CACHE_DEBUG_LOG
+//`define CACHE_DEBUG_LOG
 
 /*
 
@@ -15,20 +16,20 @@
 
 // Really dumb SRAM that enables us to access 2 lines at a time.
 module dual_port_sram #(parameter LINES = 256, LINE_LENGTH = 256)(
-    input clk,
-    input rst,
+    input   logic                         clk,        // Clock.
+    input   logic                         rst,        // Reset.
 
     // Port 1.
-    input logic [$clog2(LINES)-1:0]     prt_1_addr,
-    input logic                         prt_1_we,
-    input logic [LINE_LENGTH-1:0]       prt_1_dinp,
-    output logic [LINE_LENGTH-1:0]      prt_1_doup,
+    input   logic [$clog2(LINES)-1:0]     prt_1_addr, // Port 1: address select.
+    input   logic                         prt_1_we,   // Port 1: write enable.
+    input   logic [LINE_LENGTH-1:0]       prt_1_dinp, // Port 1: data input.
+    output  logic [LINE_LENGTH-1:0]       prt_1_doup, // Port 1: data output.
 
     // Port 2.
-    input logic [$clog2(LINES)-1:0]     prt_2_addr,
-    input logic                         prt_2_we,
-    input logic [LINE_LENGTH-1:0]       prt_2_dinp,
-    output logic [LINE_LENGTH-1:0]      prt_2_doup
+    input   logic [$clog2(LINES)-1:0]     prt_2_addr, // Port 2: address select.
+    input   logic                         prt_2_we,   // Port 2: write enable.
+    input   logic [LINE_LENGTH-1:0]       prt_2_dinp, // Port 2: data input.
+    output  logic [LINE_LENGTH-1:0]       prt_2_doup  // Port 2: data output.
 );
     // block of lines, lhs is packed & rhs is not packed.
     bit [LINE_LENGTH-1:0] sram [LINES-1:0];
@@ -44,49 +45,49 @@ module dual_port_sram #(parameter LINES = 256, LINE_LENGTH = 256)(
         if (prt_1_we) begin
             sram[prt_1_addr] = prt_1_dinp;
 
-`ifdef CACHE_DEBUG_LOG
+            `ifdef CACHE_DEBUG_LOG
             $display("A write is happening on line %d writing: %h", prt_1_addr, prt_1_dinp);
-`endif
+            `endif
         end
         // If port 2 is writing.
         if (prt_2_we) begin
             sram[prt_2_addr] = prt_2_dinp;
 
-`ifdef CACHE_DEBUG_LOG
+            `ifdef CACHE_DEBUG_LOG
             $display("A write is happening on line %d writing: %h", prt_2_addr, prt_2_dinp);
-`endif
+            `endif
         end
     end
 endmodule
 
 // This cache is designed to be fast and respond quickly, also somewhat area efficient I hope (pls dont go above 4 ways).
 module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32)(
-    input clk,
-    input rst,
+    input   logic                           clk,            // Clock.
+    input   logic                           rst,            // Reset.
 
     // Front side of the cache.
 
     // Read port.
-    input logic [ADDR_W-1:0]                fs_rdp_addr,    // Front side read port addr.
-    input logic                             fs_rdp_en,      // Front side read port enable.
-    output logic [(LINE_LENGTH * 8) - 1:0]  fs_rdp_dat,     // Front side read port data.
-    output logic                            fs_rdp_done,    // Front side read port done.
-    output logic                            fs_rdp_suc,     // Front side read port successful.
+    input   logic [ADDR_W-1:0]              fs_rdp_addr,    // Front side read port addr.
+    input   logic                           fs_rdp_en,      // Front side read port enable.
+    output  logic [(LINE_LENGTH * 8) - 1:0] fs_rdp_dat,     // Front side read port data.
+    output  logic                           fs_rdp_done,    // Front side read port done.
+    output  logic                           fs_rdp_suc,     // Front side read port successful.
 
     // Write port.
-    input logic [ADDR_W-1:0]                fs_wrp_addr,    // Front side write port addr.
-    input logic                             fs_wrp_en,      // Front side write port enable.
-    input logic [(LINE_LENGTH * 8) - 1:0]   fs_wrp_dat,     // Front side write port data.
-    output logic                            fs_wrp_done,    // Front side write port done.
-    output logic                            fs_wrp_suc,     // Front side write port successful.
+    input   logic [ADDR_W-1:0]              fs_wrp_addr,    // Front side write port addr.
+    input   logic                           fs_wrp_en,      // Front side write port enable.
+    input   logic [(LINE_LENGTH * 8) - 1:0] fs_wrp_dat,     // Front side write port data.
+    output  logic                           fs_wrp_done,    // Front side write port done.
+    output  logic                           fs_wrp_suc,     // Front side write port successful.
 
 
     // Back side of the cache.
 
-    output logic [ADDR_W-1:0]               bs_addr,        // Back side address select.
-    output logic [(LINE_LENGTH * 8)-1:0]    bs_dat,         // Back side data output.
-    output logic                            bs_we,          // Back side write enable.
-    input logic                             bs_dn           // Back side done.
+    output  logic [ADDR_W-1:0]              bs_addr,        // Back side address select.
+    output  logic [(LINE_LENGTH * 8)-1:0]   bs_dat,         // Back side data output.
+    output  logic                           bs_we,          // Back side write enable.
+    input   logic                           bs_dn           // Back side done.
 );
 
     // define a structure to represent a cache line.
@@ -130,9 +131,9 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
         // If readport enable is high.
         if (fs_rdp_en) begin
 
-`ifdef CACHE_DEBUG_LOG
+            `ifdef CACHE_DEBUG_LOG
             $display("Attempting to read a line from cache.");
-`endif
+            `endif
             // Loop over all the lines currently selected by rdp_set_sel.
             for (integer i = 0; i < WAYS; i = i + 1) begin
                 // If the line has matching tag & is valid.
@@ -143,9 +144,9 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
                     fs_rdp_done = 1;
                     fs_rdp_suc = 1;
 
-`ifdef CACHE_DEBUG_LOG
+                    `ifdef CACHE_DEBUG_LOG
                     $display("Found cache line mapping to tag %h in way %d set %d", fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], i, fs_rdp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
-`endif
+                    `endif
                 end
             end
 
@@ -155,10 +156,10 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
                 fs_rdp_done = 1;
                 fs_rdp_suc = 0;
 
-`ifdef CACHE_DEBUG_LOG
+                `ifdef CACHE_DEBUG_LOG
                 $display("L1 cahche");
                 $display("Unable to find cache line with tag %h in set %d", fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], fs_rdp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
-`endif
+                `endif
             end
         end
     end
@@ -181,9 +182,9 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
             // Case for writing to a line we already have.
             0:
             begin
-`ifdef CACHE_DEBUG_LOG
+                `ifdef CACHE_DEBUG_LOG
                 $display("Attempting to modify if present already. %t", $time);
-`endif
+                `endif
                 // Loop over the lines to look for an existing line matching tag bits.
                 for (integer i = 0; i < WAYS; i = i + 1) begin
                     // If the tag bits match and it is valid.
@@ -201,9 +202,9 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
                         fs_wrp_suc = 1;
                         fs_wrp_done = 1;
 
-`ifdef CACHE_DEBUG_LOG
+                        `ifdef CACHE_DEBUG_LOG
                         $display("Found a line to modify write to with tag %h at way %d set %d", fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], i, fs_wrp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
-`endif
+                        `endif
                     end
                 end
             end
@@ -211,9 +212,9 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
             // Case for writing a new line.
             1:
             begin
-`ifdef CACHE_DEBUG_LOG
+                `ifdef CACHE_DEBUG_LOG
                 $display("Writing a new line to cache. %t", $time);
-`endif
+                `endif
                 // Loop over the lines in the selected set and look for an empty line.
                 for (integer i = 0; i < WAYS; i = i + 1) begin
                     // If the valid bit is not set & we are not done.
@@ -231,9 +232,9 @@ module l1_cache #(parameter WAYS = 2, LINES = 128, LINE_LENGTH = 16, ADDR_W = 32
                         fs_wrp_done = 1;
                         fs_wrp_suc = 1;
 
-`ifdef CACHE_DEBUG_LOG
+                        `ifdef CACHE_DEBUG_LOG
                         $display("Found an empty line to write data to, tag %h at way %d set %d", fs_wrp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], i, fs_wrp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
-`endif
+                        `endif
                     end
                 end
 
@@ -356,32 +357,32 @@ endmodule
 
 // This cache is designed to be somewhat fast but much higher capcity and very area efficient (targeting 8-16 ways), also an exclusive cache.
 module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32)(
-    input clk,
-    input rst,
+    input   logic                               clk,            // Clock.
+    input   logic                               rst,            // Reset.
 
     // Front side of the cache.
 
     // Read port.
-    input logic [ADDR_W-1:0]                fs_rdp_addr,    // Front side read port addr.
-    input logic                             fs_rdp_en,      // Front side read port enable.
-    output logic [(LINE_LENGTH * 8) - 1:0]  fs_rdp_dat,     // Front side read port data.
-    output logic                            fs_rdp_done,    // Front side read port done.
-    output logic                            fs_rdp_suc,     // Front side read port successful.
+    input   logic [ADDR_W-1:0]                  fs_rdp_addr,    // Front side read port addr.
+    input   logic                               fs_rdp_en,      // Front side read port enable.
+    output  logic [(LINE_LENGTH * 8) - 1:0]     fs_rdp_dat,     // Front side read port data.
+    output  logic                               fs_rdp_done,    // Front side read port done.
+    output  logic                               fs_rdp_suc,     // Front side read port successful.
 
     // Write port.
-    input logic [ADDR_W-1:0]                fs_wrp_addr,    // Front side write port addr.
-    input logic                             fs_wrp_en,      // Front side write port enable.
-    input logic [(LINE_LENGTH * 8) - 1:0]   fs_wrp_dat,     // Front side write port data.
-    output logic                            fs_wrp_done,    // Front side write port done.
-    output logic                            fs_wrp_suc,     // Front side write port successful.
+    input   logic [ADDR_W-1:0]                  fs_wrp_addr,    // Front side write port addr.
+    input   logic                               fs_wrp_en,      // Front side write port enable.
+    input   logic [(LINE_LENGTH * 8) - 1:0]     fs_wrp_dat,     // Front side write port data.
+    output  logic                               fs_wrp_done,    // Front side write port done.
+    output  logic                               fs_wrp_suc,     // Front side write port successful.
 
 
     // Back side of the cache.
 
-    output logic [ADDR_W-1:0]               bs_addr,        // Back side address select.
-    output logic [(LINE_LENGTH * 8)-1:0]    bs_dat,         // Back side data output.
-    output logic                            bs_we,          // Back side write enable.
-    input logic                             bs_dn           // Back side done.
+    output  logic [ADDR_W-1:0]                  bs_addr,        // Back side address select.
+    output  logic [(LINE_LENGTH * 8)-1:0]       bs_dat,         // Back side data output.
+    output  logic                               bs_we,          // Back side write enable.
+    input   logic                               bs_dn           // Back side done.
 );
 
     ///         Setup a bunch of tag RAM            
@@ -453,9 +454,9 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
 
         // If the read port is enabled.
         if (fs_rdp_en) begin
-`ifdef CACHE_DEBUG_LOG
+            `ifdef CACHE_DEBUG_LOG
             $display("Attempting to read a line from cache.");
-`endif
+            `endif
             fs_rdp_done = 0;
             fs_wrp_done = 0;
 
@@ -487,10 +488,10 @@ module l2_cache #(parameter WAYS = 8, LINES = 512, LINE_LENGTH = 16, ADDR_W = 32
                     tr_rdp_line_we[read_way_sel] <= 1;
                 end
                 else begin
-`ifdef CACHE_DEBUG_LOG
+                    `ifdef CACHE_DEBUG_LOG
                     $display("L2 cahche");
                     $display("Unable to find cache line with tag %h in set %d", fs_rdp_addr[ADDR_W-1:($clog2(LINES) + $clog2(LINE_LENGTH))], fs_rdp_addr[$clog2(LINE_LENGTH)+:$clog2(LINES)]);
-`endif
+                    `endif
                 end
 
                 // Signal done.
