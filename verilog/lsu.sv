@@ -3,14 +3,382 @@
 
 //`define LSU_DEBUG_LOG
 
-// Will significantly reduce duplicate logic here once I re do instruction encodings.
-module load_store_unit(
-    input   logic               clk,                // Clock.
-    input   logic               rst,                // Reset.
-    input   logic               en,                 // LSU enable.
-    output  logic               dn,                 // LSU done.
+// Look what I am doing :) (what I said I would do in commend above old LSU).
+module load_store_unit #(parameter NUM_PHYSICAL_REGS = 64)(
+    input   logic                                       clk,                // Clock.
+    input   logic                                       rst,                // Reset.
+    input   logic                                       en,                 // ALU enabled.
+    output  bit                                         dn,                 // ALU done.
 
-    input   queued_instruction  instr,              // LSU instruction.
+    // Instruction queue interface.
+    input   micro_op                                    inst,               // Instruction to execute.
+
+    // PRF interface.
+    output  logic [1:0][$clog2(NUM_PHYSICAL_REGS)-1:0]  rf_rd_trgt,         // RF read port target register.
+    input   logic [1:0][31:0]                           rf_rd_dat,          // RF read port register data.
+
+    output  logic [$clog2(NUM_PHYSICAL_REGS)-1:0]       rf_wr_trgt,         // RF write port target register.
+    output  logic [31:0]                                rf_wr_dat,          // RF write port register data.
+    output  logic                                       rf_we,              // RF write port write enable.
+
+    // Interface to the memory subsystem.
+    output  logic                                       mac_prt_tx_rp,      // Mem acc cont tx request present.
+    output  line_acc_req                                mac_prt_tx_req,     // Mem acc cont tx request.
+    input   logic                                       mac_prt_tx_ra,      // Mem acc cont tx request accepted.
+
+    input   logic                                       mac_prt_rx_rp,      // Mem acc cont rx present.
+    input   line_acc_req                                mac_prt_rx_req,     // Mem acc cont rx data.
+    output  logic                                       mac_prt_rx_ra       // Mem acc cont rx accepted.
+);
+    // Set the RF read and write ports targets.
+    always_comb begin
+        // defaults.
+        rf_rd_trgt = 0;
+        rf_wr_trgt = 0;
+        // If enabled.
+        if (en) begin
+            rf_rd_trgt[0] = inst.operand_a;
+            rf_rd_trgt[1] = inst.operand_b;
+
+            rf_wr_trgt    = inst.operand_b;
+        end
+    end
+
+    // Bits to make the upper and lower bounds of memory operation.
+    logic [31:0] acc_lb;
+    logic [31:0] acc_ub;
+
+    logic [3:0] state;
+    int         byte_cnt;
+
+    always @(posedge clk) begin
+        // Defaults.
+        dn              <= 0;
+        rf_wr_dat       <= 0;
+        rf_we           <= 0;
+        mac_prt_tx_rp   <= 0;
+        mac_prt_tx_req  <= 0;
+        mac_prt_rx_ra   <= 0;
+
+        // If enabled.
+        if (en) begin
+            // Check which operation is to be done.
+            case (inst.operation) 
+            
+            // LOD A, R
+            4'b0001:
+            begin
+                `ifdef LSU_DEBUG_LOG
+                $display ("Exec LSU LOD A, R \toprnds: %d, %d %t", inst.operand_a, inst.operand_b, $time);
+                `endif
+
+                // Figure out the bounds of the load operation.
+                acc_lb = rf_rd_dat[0];
+                acc_ub = acc_lb + 3;
+
+                // Check the load can be done aligned.
+                if (acc_lb[31:4] == acc_ub[31:4]) begin
+                    case(state)
+                    // Read the line.
+                    0:
+                    begin
+                        // If the cmac accepts the read request.
+                        if (mac_prt_tx_ra) begin
+                            state <= 1;
+                        end
+                        else begin
+                            // Assign some stuffs.
+                            mac_prt_tx_req.addr <= {acc_lb[31:4], 4'b0000};
+                            mac_prt_tx_req.rqt <= 0;
+
+                            // Signal request present to the mem acc cont.
+                            mac_prt_tx_rp <= 1;
+                        end
+                    end
+
+                    // Wait for read reply from cmac.
+                    1:
+                    begin
+                        // If cmac replies with the requested read.
+                        if (mac_prt_rx_rp) begin
+
+                            // Signal request accepted.
+                            mac_prt_rx_ra <= 1;
+
+                            // Check that the read reply is the addr we want.
+                            if (mac_prt_rx_req.addr == {acc_lb[31:4], 4'b0000}) begin
+
+                                // Present bytes to the gpr input.
+                                rf_wr_dat <= mac_prt_rx_req.dat[(acc_lb[3:0] * 8) +:32];
+
+                                // Signal write enable to PRF write port.
+                                rf_we <= 1;
+
+                                // Write will be performed on next edge so signal done.
+                                dn <= 1;
+
+                                // Reset state to 0.
+                                state <= 0;
+                            end
+
+                            // Could add an else here to signal error or panic.
+                        end
+                    end
+                    endcase
+                end
+                // If an aligned load can not be performed.
+                else begin
+                    case (state)
+
+                    // State 0 (read request to top line).
+                    0:
+                    begin
+                        // If the cmac accepts the request.
+                        if (mac_prt_tx_ra) begin
+                            state <= 1;
+                        end
+                        else begin
+                            // Assign some stuffs.
+                            mac_prt_tx_req.addr <= {acc_ub[31:4], 4'b0000};
+                            mac_prt_tx_req.rqt <= 0;
+
+                            // Signal request present to the mem acc cont.
+                            mac_prt_tx_rp <= 1;
+                        end
+                    end
+
+                    // State 1 (wait for the read to return)
+                    1:
+                    begin
+                        // If the cmac has a reply for our read.
+                        if (mac_prt_rx_rp) begin
+
+                            // Signal reply accepted to cmac.
+                            mac_prt_rx_ra <= 1;
+
+                            // Check that the read reply is the addr we want.
+                            if (mac_prt_rx_req.addr == {acc_ub[31:4], 4'b0000}) begin
+
+                                // Assign bits to the gpr value input.
+                                for (int i = 3; i >= 0; i = i - 1) begin
+                                    // If the byte is in range.
+                                    if ( i <= acc_ub[3:0]) begin
+                                        // Assign the byte from read reply to the gpr_inp.
+                                        rf_wr_dat[(3-byte_cnt)*8 +:8] <= mac_prt_rx_req.dat[(i*8)+:8];
+                                        // Incriment byte_cnt.
+                                        byte_cnt = byte_cnt + 1;
+                                    end
+                                end
+
+                                // Once all bytes are assigned, move to stage 2.
+                                state <= 2;
+                            end
+                        end
+                    end
+
+                    // State 2 (submit second line read)
+                    2:
+                    begin
+                        // If the cmac accepts the request.
+                        if (mac_prt_tx_ra) begin
+                            state <= 3;
+                        end
+                        else begin
+                            // Assign some stuffs.
+                            mac_prt_tx_req.addr <= {acc_lb[31:4], 4'b0000};
+                            mac_prt_tx_req.rqt <= 0;
+
+                            // Signal request present to the mem acc cont.
+                            mac_prt_tx_rp <= 1;
+                        end
+                    end
+
+                    // State 3 (wait for second line read reply)
+                    3:
+                    begin
+                        // If the cmac has a reply for our read.
+                        if (mac_prt_rx_rp) begin
+
+                            // Signal reply accepted to cmac.
+                            mac_prt_rx_ra <= 1;
+
+                            // Check that the read reply is the addr we want.
+                            if (mac_prt_rx_req.addr == {acc_lb[31:4], 4'b0000}) begin
+
+                                // Assign bits to the gpr value input.
+                                for (int i = 12; i <= 15; i = i + 1) begin
+                                    // If the byte is in range.
+                                    if ( i >= acc_lb[3:0]) begin
+                                        // Assign the byte from read reply to the gpr_inp.
+                                        rf_wr_dat[(byte_cnt*8) +:8] <= mac_prt_rx_req.dat[(i * 8) +:8];
+                                        // Incriment byte_cnt.
+                                        byte_cnt = byte_cnt + 1;
+                                    end
+                                end
+
+                                // Signal gpr write
+                                rf_we <= 1;
+
+                                // Signal done & return to state 0.
+                                dn <= 1;
+                                state <= 0;
+                            end
+
+                            // Could add error handling here in future to send interrupt and produce trace.
+                        end
+                    end
+                    endcase
+                end
+            end
+
+            // STR A, B
+            4'b0000:
+            begin
+                `ifdef LSU_DEBUG_LOG
+                $display ("Exec LSU STR A, B \toprnds: %d, %d %t", inst.operand_a, inst.operand_b, $time);
+                `endif
+
+                // Assign the lower bound and upper bound of the store operation.
+                acc_lb = rf_rd_dat[0];
+                acc_ub = acc_lb + 3;
+
+                // Check if the store can be done aligned.
+                if (acc_lb[31:4] == acc_ub[31:4]) begin
+
+                    // If the cmac accepts the request.
+                    if (mac_prt_tx_ra) begin
+                        // Signal done.
+                        dn <= 1;
+                    end
+                    else begin
+                        // Assign address & rqt.
+                        mac_prt_tx_req.addr <= {acc_lb[31:4], 4'b0000};
+                        mac_prt_tx_req.rqt <= 1; // Write req.
+
+                        // Assign write mask and data.
+                        for (int i = 0; i < 16; i = i + 1) begin
+                            // If the byte is in range.
+                            if (i >= acc_lb[3:0] & i <= acc_ub[3:0]) begin
+                                mac_prt_tx_req.wmsk[i] <= 1;
+                            end
+                        end
+                        mac_prt_tx_req.dat[(acc_lb[3:0] * 8)+:32] <= rf_rd_dat[1];
+
+                        // Signal request present to the mem acc cont.
+                        mac_prt_tx_rp <= 1;
+                    end
+                end
+                // If can not be performed aligned.
+                else begin
+                    case(state)
+                    // Submit write request for lower line
+                    0:
+                    begin
+                        // If the cmac accepts the request.
+                        if (mac_prt_tx_ra) begin
+                            state <= 1;
+                        end
+                        else begin
+                            // Assign address & rqt.
+                            mac_prt_tx_req.addr <= {acc_lb[31:4], 4'b0000};
+                            mac_prt_tx_req.rqt <= 1; // Write req.
+
+                            // Assign write mask and data.
+                            for (int i = 12; i < 16; i = i + 1) begin
+                                // If the byte is in range.
+                                if (i >= acc_lb[3:0]) begin
+                                    // Set write mask.
+                                    mac_prt_tx_req.wmsk[i] <= 1;
+                                    // Set byte to write.
+                                    mac_prt_tx_req.dat[(i*8)+:8] <= rf_rd_dat[1][(byte_cnt*8)+:8];
+                                    // Incriment byte_cnt.
+                                    byte_cnt = byte_cnt + 1;
+                                end
+                            end
+
+                            // Signal request present to the mem acc cont.
+                            mac_prt_tx_rp <= 1;
+                        end
+                    end
+
+                    // Submit write request for upper line
+                    1:
+                    begin
+                        // If the cmac accepts the request.
+                        if (mac_prt_tx_ra) begin
+                            // Reset state to 0.
+                            state <= 0;
+                            // Signal done.
+                            dn <= 1;
+                        end
+                        else begin
+                            // Assign address & rqt.
+                            mac_prt_tx_req.addr <= {acc_ub[31:4], 4'b0000};
+                            mac_prt_tx_req.rqt <= 1; // Write req.
+
+                            // Assign write mask and data.
+                            for (int i = 3; i >= 0; i = i - 1) begin
+                                // If the byte is in range.
+                                if (i <= acc_ub[3:0]) begin
+                                    // Set write mask.
+                                    mac_prt_tx_req.wmsk[i] <= 1;
+                                    // Set byte to write.
+                                    mac_prt_tx_req.dat[(i*8)+:8] <= rf_rd_dat[1][(3-byte_cnt)*8 +:8];
+                                    // Incriment byte_cnt.
+                                    byte_cnt = byte_cnt + 1;
+                                end
+                            end
+
+                            // Signal request present to the mem acc cont.
+                            mac_prt_tx_rp <= 1;
+                        end
+                    end
+                    endcase
+                end
+            end
+            endcase
+        end
+        // If not enabled.
+        else begin
+            state <= 0;
+        end
+    end
+
+    // Handle async reset.
+    always @(posedge clk, rst) begin
+        // If reset.
+        if (rst) begin
+            mac_prt_tx_rp <= 0;
+            mac_prt_tx_req <= 0;
+            mac_prt_rx_ra <= 0;
+
+            rf_wr_dat <= 0;
+            rf_we <= 0;
+
+            dn <= 0;
+        end
+    end
+endmodule
+
+// Will significantly reduce duplicate logic here once I re do instruction encodings.
+/*
+module load_store_unit_old(
+    input   logic                       clk,                // Clock.
+    input   logic                       rst,                // Reset.
+    input   logic                       en,                 // LSU enable.
+    output  logic                       dn,                 // LSU done.
+
+    // Instruction queue interface.
+    input   decoded_instruction                 inst,               // Instruction to execute
+
+    // GPR interface.
+    output  logic [1:0][$clog2(NUM_REGS)-1:0]   gpr_rd_trgt_reg,    // RF read port target register.
+    input   logic [1:0][31:0]                   gpr_rd_reg_dat,     // RF read port register data.
+
+    output  logic [$clog2(NUM_REGS)-1:0]        gpr_wr_trgt_reg,    // RF write port target register.
+    output  logic [21:0]                        gpr_wr_reg_dat,     // RF write port register data.
+    output  logic                               gpr_wr_we,          // RF write port write enable.
+
 
     input   logic [31:0]        gpr_oup [15:0],     // GPRs output data.
     output  logic [31:0]        gpr_inp [15:0],     // GPRs input data.
@@ -588,3 +956,4 @@ module load_store_unit(
         end
     end
 endmodule
+*/

@@ -1,6 +1,9 @@
 `include "defines.svh"
 `include "structs.svh"
 
+// Idea to re write CMAC with the in flight buffer being referenced from the caches to reduce the bit width of passing all the requests around.
+
+
 // Each cache is 2 port: 1 read, 1 write.
 // Each cache has a seperate read & write queue.
 //`define CMAC_DEBUG_LOG

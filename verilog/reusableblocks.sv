@@ -290,6 +290,7 @@ module register #(parameter WIDTH, RESET_VAL = 'hFFFFFFFF)(
 endmodule
 
 
+
 /*          Gray code counter           */
 //***************** FINISH THIS LATER.
 module graycode_counter #(parameter WIDTH)(

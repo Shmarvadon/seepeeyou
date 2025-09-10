@@ -78,17 +78,58 @@ typedef struct packed {
 
 /*          Instruction stuff           */
 
-typedef struct packed {
-    bit [47:0] bits;        // Used to be called inst, if errors swap out with bits.
-    bit [31:0] addr;
-    bit [3:0] len;
-} queued_instruction;
-
-typedef struct packed{  // MSB
-    logic [4:0] operand_b;
-    logic [4:0] operand_a;
-    logic [3:0] operation;
-    logic [1:0] unit;
-} dec_inst;             // LSB
+typedef struct packed { // MSB
+    logic [2:0]     num_uops;       // Number of uops the instruction decodes to.
+    logic [2:0]     num_prs;        // Number of PRs that the instruction requires be allocated.
+    logic [47:0]    bits;           // Instruction bits.
+    logic [31:0]    pc;             // Instruction PC.
+} inst_predec_res_t;      // LSB
 
 
+typedef struct packed { // MSB
+    logic [4:0]     rob_ptr;
+    logic [5:0]     operand_d;
+    logic [5:0]     operand_c;
+    logic [5:0]     operand_b;
+    logic [5:0]     operand_a;
+    logic [3:0]     operation;
+    logic [2:0]     exec_unit;
+} micro_op_t;             // LSB
+ 
+typedef struct packed { // MSB
+    // Stale physical registers.
+    logic [5:0]     stale_c_pr;
+    logic [5:0]     stale_b_pr;
+    logic [5:0]     stale_a_pr;
+    logic [2:0]     stale_regs;
+
+    // info to update RAT_C.
+    logic [4:0]     commit_b_isa_reg;
+    logic [5:0]     commit_b_pr_alias;
+    logic [4:0]     commit_a_isa_reg;
+    logic [5:0]     commit_a_pr_alias;
+    logic [1:0]     commit_regs;
+
+    // uop code.
+    logic [3:0]     operation;
+    logic [2:0]     exec_unit;
+
+    // tracking bits for stuffs.
+    logic [31:0]    pc;
+    logic           dn;
+} rob_entry_t;            // LSB 
+
+
+
+/*          Score Board stuff           */
+
+// enum to signal what the purpose of a PR is.
+typedef enum logic [4:0] {isa_reg_gpr_a, isa_reg_gpr_b, isa_reg_gpr_c, isa_reg_gpr_d, isa_reg_gpr_e, isa_reg_gpr_f, isa_reg_gpr_g, isa_reg_gpr_h, isa_reg_gpr_i, isa_reg_gpr_j, isa_reg_gpr_k, isa_reg_gpr_l, isa_reg_gpr_m, isa_reg_gpr_n, isa_reg_gpr_o, isa_reg_gpr_p, isa_reg_shp, isa_reg_sbp, isa_reg_alu_stat} isa_reg;
+
+
+// Structure to hold data for each GPR.
+typedef struct packed { //MSB
+    logic               free;               // Indicates if the register is in use or not.
+    logic               valid;              // Indicates if the register contains valid data or not.
+} register_status;      // LB
+  
