@@ -78,8 +78,8 @@
 `define UOP_AGU_SUB    4'b0001
 
 // Branching Operations
-`define UOP_BRANCH_JMP 4'b0000
-`define UOP_BRANCH_JIZ 4'b0001
+`define UOP_PFC_JMP 4'b0000
+`define UOP_PFC_JIZ 4'b0001
 
 
 /*          NOC address defines         */

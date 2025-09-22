@@ -3,7 +3,128 @@
 
 //`define PFCU_DEBUG_LOG
 
-module program_flow_control #(parameter NUM_PHYSICAL_REGS = 64) (
+// Requires scheduler to enforce in order execution. (IN_ORDER = 1)
+module profram_flow_control #(parameter NUM_PHYSICAL_REGS = 64, ROB_LEN = 16)(
+    input   logic                                       i_clk,                  // Clock signal.
+    input   logic                                       i_rst,                  // Reset signal.
+
+    // Interface from scheduler.
+    input   logic                                       i_uop_p,                // Input uop present.
+    input   micro_op_t                                  i_uop,                  // Input uop.
+    output  logic                                       o_stall,                // Output stall signal.
+
+    // Interface with PRF.
+    output  logic [1:0][$clog2(NUM_PHYSICAL_REGS)-1:0]  o_rf_rd_trgt,           // RF read port target register.
+    input   logic [1:0][31:0]                           i_rf_rd_dat,            // RF read port register data.
+
+    // Interface with ROB.
+    output  logic                                       o_uop_dn,               // ROB signal uop done.
+    output  logic [$clog2(ROB_LEN)-1:0]                 o_uop_ptr,               // ROB uop pointer.
+
+    // Interface with commit stage.
+    output  logic                                       o_brnch,                // Branch taken signal to commit stage.
+    output  logic [31:0]                                o_brnch_dst            // Branch destination signal to commit stage.
+);
+    // Set the read target for each PRF read port.
+    assign o_rf_rd_trgt[0]  =   i_uop.operand_a;    // PC_NEW
+    assign o_rf_rd_trgt[1]  =   i_uop.operand_b;    // ALU_STAT
+
+    // Variables to load UOP and operands into.
+    micro_op_t      uop;
+    logic           uop_p;
+    logic [31:0]    pc_new;
+    logic [31:0]    alu_stat;
+
+    // Internal signals to indicate if uop branches or a stall occures.
+    logic           brnch;
+    logic [31:0]    brnch_dst;
+    logic           stall;
+
+    // Clock in the UOP and its operands if its present and we do not have a stall.
+    always @(posedge i_clk) begin
+        // Default value.
+        uop_p <= 0;
+
+        // If not reset.
+        if (!i_rst) begin
+            // If not stalling.
+            if (!stall) begin
+
+                `ifdef PFC_DEBUG_LOG
+                $display("Reading PRF for PFC uop %h at %t", i_uop.operation, $time);
+                `endif
+
+                // If a uop is present from scheduler, clock it in along with operands.
+                uop_p       <=  i_uop_p;
+                uop         <=  i_uop;
+                pc_new      <=  i_rf_rd_dat[0];
+                alu_stat    <=  i_rf_rd_dat[1];
+            end
+            // If stalling.
+            else begin
+                uop_p       <=  uop_p;
+                uop         <=  uop;
+                pc_new      <=  pc_new;
+                alu_stat    <=  alu_stat;
+            end
+        end
+    end
+
+    assign o_uop_ptr    = uop.rob_ptr;
+    assign o_stall      = stall;
+
+    // Check if we need to branch.
+    always_comb begin
+        // Default value.
+        stall = 0;
+        brnch = 0;
+
+        // Check if we need to branch.
+        case(uop.operation)
+        `UOP_PFC_JMP: begin 
+            brnch = 1; brnch_dst <= pc_new; stall = 1;
+            end
+        `UOP_PFC_JIZ: begin 
+            if (alu_stat[0]) begin brnch = 1; brnch_dst = pc_new; stall = 1; end
+            else             begin brnch = 0; brnch_dst = 0;      stall = 0; end
+        end
+        endcase
+
+    end
+
+    always @(posedge i_clk) begin
+        // Default values.
+        o_brnch     <= 0;
+        o_uop_dn    <= 0;
+        o_brnch_dst <= 0;
+
+        // If not in reset.
+        if (!i_rst) begin
+            // if a uop is present.
+            if (uop_p) begin
+
+                `ifdef PFC_DEBUG_LOG
+                $display("Executing PFC uop %h at %t", uop.operation, $time);
+                `endif
+
+                // If jump results in a branch.
+                if (brnch) begin
+                    o_brnch         <= 1;
+                    o_brnch_dst     <= brnch_dst;
+                    o_uop_dn        <= 1;
+                end
+                // If the instruction does not result in a branch.
+                else begin
+                    o_brnch         <= 0;
+                    o_uop_dn        <= 1;
+                end
+            end
+        end
+    end
+endmodule
+
+/*
+module program_flow_control_old #(parameter NUM_PHYSICAL_REGS = 64) (
     input   logic                                       clk,                // Clock.
     input   logic                                       rst,                // Reset.
     input   logic                                       en,                 // PFCU enable.
@@ -12,7 +133,7 @@ module program_flow_control #(parameter NUM_PHYSICAL_REGS = 64) (
     // IFE interface.
     output  logic                                       jmp,                // Jump signal.
     output  logic [31:0]                                new_pc,             // new program counter value.
-    input   micro_op                                    inst,               // Instruction to execute.
+    input   micro_op_t                                  inst,               // Instruction to execute.
 
     // PRF interface.
     output  logic [3:0][$clog2(NUM_PHYSICAL_REGS)-1:0]  rf_rd_trgt,         // RF read port target register.
@@ -399,6 +520,8 @@ always @(posedge clk) begin
     end
 end
 endmodule
+*/
+
 /*
 module program_flow_control_old #(parameter NUM_REGS = 32) (
     input   logic                               clk,                // Clock.

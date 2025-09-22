@@ -1,37 +1,3 @@
-/*
-module general_purpose_registers #(parameter REG_COUNT = 32)(
-    input   logic                       clk,        // Clock.
-    input   logic                       rst,        // Reset.
-
-    input   logic  [REG_COUNT-1:0]      we,         // Write enable.
-    input   logic  [31:0]               inp [REG_COUNT-1:0], // Data input.
-    output  logic  [31:0]               oup [REG_COUNT-1:0]  // Data output.
-);
-
-// The registers.
-logic [31:0] registers [REG_COUNT-1:0];
-// Assign them to drive the output.
-assign oup = registers;
-
-// Handle input to the registers.
-integer i;
-always @(posedge clk) begin
-    // Loop over each reg and input if the flag is det.
-    for (i = 0; i < 16; i = i + 1) begin
-        if (we[i]) begin
-            registers[i] <= inp[i];
-        end
-    end
-end
-
-// Handle reset.
-always @(posedge rst) begin
-    for(i = 0; i < REG_COUNT; i = i + 1) begin
-        registers[i] <= 0;
-    end
-end
-endmodule
-*/
 
 
 

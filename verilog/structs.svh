@@ -128,8 +128,20 @@ typedef enum logic [4:0] {isa_reg_gpr_a, isa_reg_gpr_b, isa_reg_gpr_c, isa_reg_g
 
 
 // Structure to hold data for each GPR.
-typedef struct packed { //MSB
+typedef struct packed { //  MSB
     logic               free;               // Indicates if the register is in use or not.
     logic               valid;              // Indicates if the register contains valid data or not.
-} register_status;      // LB
-  
+} register_status;      //  LSB
+
+
+/*          Load Store Queue Stuff          */
+
+// Needs to store info on if the operation is a lod or store
+typedef struct packed { // MSB
+    logic [5:0]     rob_ptr;        // CHANGE THIS IN FUTURE WHEN I MOVE TO DIFFERENT PARAMETER SETUP THINGY.
+    logic [5:0]     lod_dst;     // Load result physical register.
+    logic [31:0]    dat;
+    logic [31:0]    addr;
+    logic           acc_type;
+    logic           dn;
+} lsq_entry_t;          // LSB

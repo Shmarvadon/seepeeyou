@@ -3,8 +3,208 @@
 
 //`define LSU_DEBUG_LOG
 
+// Requires scheduler to enforce in order execution. (IN_ORDER = 1)
+module load_store_unit #(parameter NUM_PHYSICAL_REGS = 64, ROB_LEN = 16, LSQ_LEN = 4)(
+    input   logic                                       i_clk,                  // Clock signal.
+    input   logic                                       i_rst,                  // Reset signal.
+
+    // Interface from scheduler.
+    input   logic                                       i_uop_p,                // Input uop present.
+    input   micro_op_t                                  i_uop,                  // Input uop.
+    output  logic                                       o_stall,                // Output stall signal.
+
+    // Interface with PRF.
+    output  logic [1:0][$clog2(NUM_PHYSICAL_REGS)-1:0]  o_rf_rd_trgt,           // RF read port target register.
+    input   logic [1:0][31:0]                           i_rf_rd_dat,            // RF read port register data.
+
+    output  logic [$clog2(NUM_PHYSICAL_REGS)-1:0]       o_rf_wr_trgt,           // RF write port target register.
+    output  logic [31:0]                                o_rf_wr_dat,            // RF write port register data.
+    output  logic                                       o_rf_we,                // RF write port write enable.
+
+    // Interface with ROB.
+    output  logic                                       o_uop_dn,               // ROB signal uop done.
+    output  logic [$clog2(ROB_LEN)-1:0]                 o_uop_ptr               // ROB uop pointer.
+);
+
+    // Set the read target for each PRF read port.
+    assign o_rf_rd_trgt[0]  =   i_uop.operand_a;
+    assign o_rf_rd_trgt[1]  =   i_uop.operand_b;
+
+    // Variables to load uop and operands into.
+    micro_op_t      uop;
+    logic           uop_p;
+    logic [31:0]    opr_a;
+    logic [31:0]    opr_b;
+
+    // Clock uop and operands into this unit.
+    always @(posedge i_clk) begin
+        // Default values.
+        uop     <= 0;
+        uop_p   <= 0;
+
+        // If not reset.
+        if (!i_rst) begin
+            // If not stalling.
+            if (!o_stall) begin
+
+                `ifdef LSU_DEBUG_LOG
+                $display("Reading PRF for LSU uop %h at %t", i_uop.operation, $time);
+                `endif
+
+                uop_p   <= i_uop_p;
+                uop     <= i_uop;
+                opr_a   <= i_rf_rd_dat[0];
+                opr_b   <= i_rf_rd_dat[1];
+            end
+            // If stalling
+            else begin
+                uop     <= uop;
+                uop_p   <= uop_p;
+                opr_a   <= opr_a;
+                opr_b   <= opr_b;
+            end
+        end
+
+    end
+
+
+    // Load Store Queue
+    lsq_entry_t                 lsq_dat [LSQ_LEN-1:0];
+    logic [$clog2(LSQ_LEN):0]   lsq_wptr;
+    logic [$clog2(LSQ_LEN):0]   lsq_rptr;
+    logic 
+
+endmodule
+
+
+module load_store_queue #(parameter LEN = 16, HEADS = 1, TAILS = 1)(
+    input   logic                                   clk,            // Clock.
+    input   logic                                   rst,            // Reset.
+
+    // heads.
+    input   logic [HEADS-1:0]                       inp_p,          // Input push.
+    input   lsq_entry_t [HEADS-1:0]                 inp_dat,        // Input data.
+    output  logic [$clog2(LEN)-1:0]                 src_num_avail,  // Source number of slots available.
+
+    // tails.
+    input   logic [TAILS-1:0]                       oup_p,          // Output pop.
+    output  lsq_entry_t [TAILS-1:0]                 oup_dat,        // Output data.
+    output  logic [$clog2(LEN)-1:0]                 dst_num_avail,  // Destination number of slots available.
+
+    // side ports.  
+    input   logic [LEN-1:0]                         sp_md,          // Side port mark done.
+    input   logic [LEN-1:0][$clog2(LEN)-1:0]        sp_ptr          // Side port pointer.
+);
+
+    // Ensure that LEN parameter is a power of 2.
+    generate
+    if (LEN & (LEN - 1)) $error("Length must be power of 2.");
+    endgenerate
+
+
+    // ROB data entries.
+    lsq_entry_t [LEN-1:0]       lsq_entries;
+
+    // Read pointer.
+    logic [$clog2(LEN):0]       rptr;
+
+    // Write pointer.
+    logic [$clog2(LEN):0]       wptr;
+
+    // Logic to handle pushing and popping from the ROB.
+    logic [$clog2(LEN):0]         rptr_tmp;
+    logic [$clog2(LEN):0]         wptr_tmp;
+    always @(posedge clk) begin
+        
+        // Loop over each of the push ports.
+        for (int i = 0; i < ROB_HEADS; i = i + 1) begin
+            if (inp_p[i]) begin
+                // If the shift register is not full.
+                if (!(wptr[$clog2(LEN)-1:0] == rptr[$clog2(LEN)-1:0] && wptr[$clog2(LEN)] != rptr[$clog2(LEN)])) begin
+                    // Push the data.
+                    lsq_entries[wptr[$clog2(LEN)-1:0]] = inp_dat[i];
+
+                    // Incriment the wptr.
+                    wptr = wptr + 1;
+                end
+            end
+        end
+
+        // Update the number of entries that are unoccupied.
+        src_num_avail <= (rptr[$clog2(LEN)] == wptr[$clog2(LEN)]) ? (LEN - (wptr[$clog2(LEN)-1:0] - rptr[$clog2(LEN)-1:0])) : (LEN - (wptr[$clog2(LEN)-1:0] + LEN - rptr[$clog2(LEN)-1:0]));
+    
+
+        // loop over each of the side ports and mark the entries they are pointing to as fully executed.
+        for (int i = 0; i < EXEC_UNITS; i = i + 1) begin
+            if (sp_md[i]) begin
+                lsq_entries[sp_ptr[i]].dn = 1;
+            end
+        end
+
+
+        // Loop over each of the pop ports.
+        for (int i = 0; i < ROB_TAILS; i = i + 1) begin
+            // If the position wants to pop & the sr is not empty.
+            if (oup_p[i] & rptr != wptr) begin
+                // Incriment the rptr.
+                lsq_entries[rptr] = 0;
+                rptr = rptr + 1;
+            end
+        end
+
+        // Loop over each of the pop ports to present data to them.
+        rptr_tmp = rptr;
+        for (int i = 0; i < ROB_TAILS; i = i + 1) begin
+            // if not empty.
+            if (rptr_tmp != wptr) begin
+                // Present the data.
+                oup_dat[i] <= lsq_entries[rptr_tmp[$clog2(LEN)-1:0]];
+                oup_ptr[i] <= rptr_tmp;
+            end
+            else begin
+                oup_dat[i] <= 0;
+                oup_ptr[i] <= 0;
+            end
+            // Incriment rptr_tmp.
+            rptr_tmp = rptr_tmp + 1;
+        end
+
+        // Update the number of entries that are occupied.
+        dst_num_avail <= (rptr[$clog2(LEN)] == wptr[$clog2(LEN)]) ? (wptr[$clog2(LEN)-1:0] - rptr[$clog2(LEN)-1:0]) : (wptr[$clog2(LEN)-1:0] + LEN - rptr[$clog2(LEN)-1:0]);
+
+
+
+        // Loop over the write ports and present the ROB pointer to them.
+        wptr_tmp = wptr;
+        for (int i = 0; i < ROB_HEADS; i = i + 1) begin
+            // Present the pointer for where the head will input to.
+            inp_ptr[i] <= wptr_tmp[$clog2(LEN)-1:0];
+
+            // Incriment temporary write pointer.
+            wptr_tmp <= wptr_tmp + 1;
+        end
+    end
+
+    // Handle sync reset.
+    always @(posedge clk) begin
+        if (rst) begin
+            inp_ptr         <= 0;
+            src_num_avail   <= LEN;
+            oup_dat         <= 0;
+            dst_num_avail   <= 0;
+            rptr            <= 0;
+            wptr            <= 0;
+            rptr_tmp        <= 0;
+            wptr_tmp        <= 0;
+        end
+    end
+endmodule
+
+
+
+
 // Look what I am doing :) (what I said I would do in commend above old LSU).
-module load_store_unit #(parameter NUM_PHYSICAL_REGS = 64)(
+module load_store_unit_old #(parameter NUM_PHYSICAL_REGS = 64)(
     input   logic                                       clk,                // Clock.
     input   logic                                       rst,                // Reset.
     input   logic                                       en,                 // ALU enabled.

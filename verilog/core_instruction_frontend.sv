@@ -11,6 +11,9 @@ module instruction_front_end #(parameter IQ_LEN = 8, IDB_LEN = 64, SB_ALLOC_PORT
     input   logic [31:0]                                                    i_pc_inp,               // input to program counter register.
     input   logic                                                           i_jmp,                  // Jump signal.
 
+    //Interface from RAT_c
+    input   logic [18:0][$clog2(NUM_PHYSICAL_REGS)-1:0]                     i_rat_c_alias,          // RAT_c aliases for use to reload RAT_s on jump.
+
     // Interface to score board.
     output  logic   [SB_ALLOC_PORTS-1:0]                                    o_alloc_pr,             // Allocate physical register
     input   logic   [SB_ALLOC_PORTS-1:0][$clog2(NUM_PHYSICAL_REGS)-1:0]     i_allocd_reg,           // Allocated physical register (PR).
@@ -90,46 +93,53 @@ module instruction_front_end #(parameter IQ_LEN = 8, IDB_LEN = 64, SB_ALLOC_PORT
     o_rob_inp_p, o_rob_inp, i_rob_inp_ptr, i_rob_src_num_avail);
 
     // Register Alias Table (speculative).
-    register_allocation_table #(19, NUM_PHYSICAL_REGS) rat_s(i_clk,  rat_rst, rat_we, rat_new_alias, rat_alias);
+    register_allocation_table_ #(19, NUM_PHYSICAL_REGS) rat_s(i_clk,  rat_rst, i_jmp, i_rat_c_alias, rat_we, rat_new_alias, rat_alias);
 
 
-
-    // Handle top module level clocked logic.
-    always @(posedge i_clk) begin
+    // Handle propogating sync reset & jump to sub-modules.
+    always_comb begin
         // Default values.
         idb_rst = 0;
         ibf_rst = 0;
+        ipd_rst = 0;
+        ide_rst = 0;
+        rat_rst = 0;
+
+        // if jump.
+        if (i_jmp) begin
+            idb_rst = 1;
+            ibf_rst = 1;
+            ipd_rst = 1;
+            ide_rst = 1;
+            rat_rst = 0;
+        end
+
+        // If reset.
+        if (i_rst) begin
+            idb_rst = 1;
+            ibf_rst = 1;
+            ipd_rst = 1;
+            ide_rst = 1;
+            rat_rst = 1;
+        end
+    end
+
+    // Handle top module level clocked logic.
+    always @(posedge i_clk) begin
+
         // Update idbba when bytes are popped.
         for (int i = 0; i < MAX_INST_LEN; i = i + 1 ) begin
             if (idb_pop[i]) idbba = idbba + 1;
         end
 
-
         // Handle jump being signalled.
         if (i_jmp) begin
             idbba <= i_pc_inp;
-            idb_rst <= 1;
-            ibf_rst <= 1;
         end
-        
-    end
 
-    // Handle async reset.
-    always @(posedge i_rst, i_clk) begin
+        // Handle reset being signalled.
         if (i_rst) begin
-            idb_rst <= 1;
-            ibf_rst <= 1;
-            ipd_rst <= 1;
-            ide_rst <= 1;
-            rat_rst <= 1;
-            idbba   <= 0;
-        end
-        else begin
-            idb_rst <= 0;
-            ibf_rst <= 0;
-            ipd_rst <= 0;
-            ide_rst <= 0;
-            rat_rst <= 0;
+            idbba <= 0;
         end
     end
 endmodule
@@ -152,7 +162,7 @@ module instruction_pre_decode #(parameter IB_INP_LEN = 6, IDB_LEN = 64)(
 );
 
     // Perform pre-decode of the instruction.
-    inst_predec_res_t         predec_res;
+    inst_predec_res_t       predec_res;
     logic [IB_INP_LEN-1:0]  inst_bytes_pop;
     logic [3:0]             inst_len;
     always_comb begin
@@ -371,8 +381,8 @@ module instruction_pre_decode #(parameter IB_INP_LEN = 6, IDB_LEN = 64)(
         endcase
     end
 
-    // Handle async reset.
-    always @(posedge i_clk, i_rst) begin
+    // Handle sync reset.
+    always @(posedge i_clk) begin
         if (i_rst) begin
             o_dn <= 0;
             o_predecd_inst <= 0;
@@ -1431,7 +1441,7 @@ module instruction_decode #(parameter SB_ALLOC_PORTS = 4, NUM_PHYSICAL_REGS = 64
                 // Decode uop.
                 decd_uop[0] = '{
                     exec_unit:          `EXEC_UNIT_PFC,
-                    operation:          `UOP_BRANCH_JMP,
+                    operation:          `UOP_PFC_JMP,
                     operand_a:          i_allocd_reg[0],
                     rob_ptr:            i_rob_inp_ptr[0],
                     default:            0
@@ -1441,7 +1451,7 @@ module instruction_decode #(parameter SB_ALLOC_PORTS = 4, NUM_PHYSICAL_REGS = 64
                     dn:                 1'b0,
                     pc:                 i_inst_predec.pc,
                     exec_unit:          `EXEC_UNIT_PFC,
-                    operation:          `UOP_BRANCH_JMP,
+                    operation:          `UOP_PFC_JMP,
                     commit_regs:        2'b00,
                     stale_regs:         3'b001,
                     stale_a_pr:         i_allocd_reg[0],
@@ -1460,7 +1470,7 @@ module instruction_decode #(parameter SB_ALLOC_PORTS = 4, NUM_PHYSICAL_REGS = 64
                 // Decode uop.
                 decd_uop[0] = '{
                     exec_unit:          `EXEC_UNIT_PFC,
-                    operation:          `UOP_BRANCH_JIZ,
+                    operation:          `UOP_PFC_JIZ,
                     operand_a:          i_allocd_reg[0],
                     operand_b:          i_rat_alias[isa_reg_alu_stat],
                     rob_ptr:            i_rob_inp_ptr[0],
@@ -1471,7 +1481,7 @@ module instruction_decode #(parameter SB_ALLOC_PORTS = 4, NUM_PHYSICAL_REGS = 64
                     dn:                 1'b0,
                     pc:                 i_inst_predec.pc,
                     exec_unit:          `EXEC_UNIT_PFC,
-                    operation:          `UOP_BRANCH_JIZ,
+                    operation:          `UOP_PFC_JIZ,
                     commit_regs:        2'b00,
                     stale_regs:         3'b001,
                     stale_a_pr:         i_allocd_reg[0],
@@ -1567,8 +1577,8 @@ module instruction_decode #(parameter SB_ALLOC_PORTS = 4, NUM_PHYSICAL_REGS = 64
         endcase
     end
 
-    // Handle async reset.
-    always @(posedge i_clk, i_rst) begin
+    // Handle sync reset.
+    always @(posedge i_clk) begin
         if (i_rst) begin
             o_rf_we <= 0;       
             o_rf_wr_trgt <= 0;          
@@ -1746,19 +1756,40 @@ module instruction_fetch #(parameter IDB_SIZE = 64, IDB_HEAD_COUNT = 16)(
 endmodule
 
 // Simple wrapper around the re-usable register module.
-module register_allocation_table #(parameter REG_COUNT = 16, PHYSICAL_REG_COUNT = 32) (
-    input logic clk,
-    input logic rst,
+module register_allocation_table_s #(parameter REG_COUNT = 19, PHYSICAL_REG_COUNT = 64) (
+    input   logic                                                   i_clk,          // Clock signal.
+    input   logic                                                   i_rst,          // Reset signal.
 
-    input logic [REG_COUNT-1:0]                                     we,
-    input logic [REG_COUNT-1:0][$clog2(PHYSICAL_REG_COUNT)-1:0]     dinp,
+    input   logic                                                   i_jmp,          // Jump signal.
+    input   logic [REG_COUNT-1:0][$clog2(PHYSICAL_REG_COUNT)-1:0]   i_rat_c_alias,  // RAT_c alias'.
 
-    output logic [REG_COUNT-1:0][$clog2(PHYSICAL_REG_COUNT)-1:0]    doup
+    input   logic [REG_COUNT-1:0]                                   i_we,           // Write enable signal.
+    input   logic [REG_COUNT-1:0][$clog2(PHYSICAL_REG_COUNT)-1:0]   i_dinp,         // New alias input.
+
+    output  logic [REG_COUNT-1:0][$clog2(PHYSICAL_REG_COUNT)-1:0]   o_doup          // Current alias output.
 );
+
+    logic [REG_COUNT-1:0]                                   we;
+    logic [REG_COUNT-1:0][$clog2(PHYSICAL_REG_COUNT)-1:0]   dinp;
 
     generate
         for (genvar i = 0; i < REG_COUNT; i = i + 1) begin
-            register #($clog2(PHYSICAL_REG_COUNT), i) reg_alloc(.clk(clk), .rst(rst), .inp(dinp[i]), .oup(doup[i]), .we(we[i]));
+            // Instantiate a register to hold the alias.
+            register #($clog2(PHYSICAL_REG_COUNT), i) reg_alloc(.clk(i_clk), .rst(i_rst), .inp(dinp[i]), .oup(o_doup[i]), .we(we[i]));
+
+            // always block to handle hot reset on jump.
+            always_comb begin
+                // Default values.
+                we[i]   = i_we[i];
+                dinp[i] = i_dinp[i];
+
+                // If there is a jump.
+                if (i_jmp) begin
+                    we[i]   = 1;
+                    dinp[i] = i_rat_c_alias[i];
+                end
+            end
+
         end
     endgenerate
 endmodule

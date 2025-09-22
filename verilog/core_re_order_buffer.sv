@@ -6,13 +6,14 @@ module re_order_buffer #(parameter ROB_LEN = 16, ROB_HEADS = 3, ROB_TAILS = 1, E
 
     // ROB heads.
     input   logic [ROB_HEADS-1:0]                       inp_p,          // Input push.
-    input   rob_entry [ROB_HEADS-1:0]                   inp_dat,        // Input data.
+    input   rob_entry_t [ROB_HEADS-1:0]                 inp_dat,        // Input data.
     output  logic [ROB_HEADS-1:0][$clog2(ROB_LEN)-1:0]  inp_ptr,        // Input ROB pointer.
     output  logic [$clog2(ROB_LEN)-1:0]                 src_num_avail,  // Source number of slots available.
 
     // ROB tails.
     input   logic [ROB_TAILS-1:0]                       oup_p,          // Output pop.
-    output  rob_entry [ROB_TAILS-1:0]                   oup_dat,        // Output data.
+    output  rob_entry_t [ROB_TAILS-1:0]                 oup_dat,        // Output data.
+    output  logic [ROB_HEADS-1:0][$clog2(ROB_LEN)-1:0]  oup_ptr,        // Input ROB pointer.
     output  logic [$clog2(ROB_LEN)-1:0]                 dst_num_avail,  // Destination number of slots available.
 
     // ROB side ports.  
@@ -27,7 +28,7 @@ module re_order_buffer #(parameter ROB_LEN = 16, ROB_HEADS = 3, ROB_TAILS = 1, E
 
 
     // ROB data entries.
-    rob_entry [ROB_LEN-1:0]         rob_entries;
+    rob_entry_t [ROB_LEN-1:0]       rob_entries;
 
     // Read pointer.
     logic [$clog2(ROB_LEN):0]       rptr;
@@ -83,9 +84,11 @@ module re_order_buffer #(parameter ROB_LEN = 16, ROB_HEADS = 3, ROB_TAILS = 1, E
             if (rptr_tmp != wptr) begin
                 // Present the data.
                 oup_dat[i] <= rob_entries[rptr_tmp[$clog2(ROB_LEN)-1:0]];
+                oup_ptr[i] <= rptr_tmp;
             end
             else begin
                 oup_dat[i] <= 0;
+                oup_ptr[i] <= 0;
             end
             // Incriment rptr_tmp.
             rptr_tmp = rptr_tmp + 1;
@@ -104,6 +107,20 @@ module re_order_buffer #(parameter ROB_LEN = 16, ROB_HEADS = 3, ROB_TAILS = 1, E
 
             // Incriment temporary write pointer.
             wptr_tmp <= wptr_tmp + 1;
+        end
+    end
+
+    // Handle sync reset.
+    always @(posedge clk) begin
+        if (rst) begin
+            inp_ptr         <= 0;
+            src_num_avail   <= ROB_LEN;
+            oup_dat         <= 0;
+            dst_num_avail   <= 0;
+            rptr            <= 0;
+            wptr            <= 0;
+            rptr_tmp        <= 0;
+            wptr_tmp        <= 0;
         end
     end
 endmodule
